@@ -185,7 +185,6 @@ interface NoteMetadata {
 function parseNotesCsv(csv: string): Map<string, NoteMetadata> {
   const map = new Map<string, NoteMetadata>();
   const lines = csv.split('\n');
-  // Skip header (line 0)
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -200,6 +199,91 @@ function parseNotesCsv(csv: string): Map<string, NoteMetadata> {
     });
   }
   return map;
+}
+
+// ─── Shared Notes CSV parsers ─────────────────────────────────────────────────
+// Shared Notes Info.csv header:
+//   File Name, Shared On, Last Modified Date, Participants Details
+//
+// Subscribed Notes Info.csv header:
+//   File Name, Owner Details, Last Modified Date, Shared On, Participants Details
+//
+// Participants Details format (pipe-separated entries, semicolon-separated fields):
+//   "Name:Alice; Email:a*****@web.de; Permission:READ_WRITE; Acceptance Status:ACCEPTED | Name:Bob; ..."
+// Owner Details format:
+//   "Name:X; Email:Y"
+
+interface ParticipantRecord {
+  filePath: string;       // the note's relative file path from the CSV
+  sharedAt: number;
+  displayName: string;
+  emailMasked: string;
+  permission: string;
+  acceptance: string;
+  role: 'sharer' | 'owner';
+}
+
+function parseParticipantBlock(block: string, role: 'sharer' | 'owner'): Omit<ParticipantRecord, 'filePath' | 'sharedAt'>[] {
+  const results: Omit<ParticipantRecord, 'filePath' | 'sharedAt'>[] = [];
+  // Each participant separated by " | "
+  const entries = block.split('|').map(s => s.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const fields: Record<string, string> = {};
+    for (const part of entry.split(';')) {
+      const idx = part.indexOf(':');
+      if (idx === -1) continue;
+      const key = part.slice(0, idx).trim().toLowerCase().replace(/\s+/g, '_');
+      fields[key] = part.slice(idx + 1).trim();
+    }
+    results.push({
+      displayName: fields['name'] ?? '',
+      emailMasked: fields['email'] ?? '',
+      permission: fields['permission'] ?? '',
+      acceptance: fields['acceptance_status'] ?? fields['acceptance'] ?? '',
+      role,
+    });
+  }
+  return results;
+}
+
+function parseSharedNotesCsv(csv: string, role: 'sharer' | 'owner'): ParticipantRecord[] {
+  const records: ParticipantRecord[] = [];
+  const lines = csv.split('\n');
+
+  // Detect column positions from header
+  const header = parseCsvLine(lines[0] ?? '').map(h => h.trim().toLowerCase());
+  const fileIdx        = header.findIndex(h => h === 'file name');
+  const sharedOnIdx    = role === 'sharer'
+    ? header.findIndex(h => h === 'shared on')
+    : header.findIndex(h => h === 'shared on');
+  const participantsIdx = header.findIndex(h => h.includes('participants'));
+  const ownerIdx       = header.findIndex(h => h.includes('owner'));
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const fields = parseCsvLine(line);
+
+    const filePath   = fields[fileIdx]?.trim() ?? '';
+    const sharedAtRaw = fields[sharedOnIdx]?.trim() ?? '';
+    const sharedAt   = sharedAtRaw ? parseCsvDate(sharedAtRaw) : 0;
+
+    // For subscribed notes the "owner" is a single person block
+    if (role === 'owner' && ownerIdx !== -1) {
+      const ownerBlock = fields[ownerIdx]?.trim() ?? '';
+      const parsed = parseParticipantBlock(ownerBlock, 'owner');
+      for (const p of parsed) records.push({ filePath, sharedAt, ...p });
+    }
+
+    // Participants column (present in both CSVs)
+    if (participantsIdx !== -1) {
+      const participantsBlock = fields[participantsIdx]?.trim() ?? '';
+      const parsed = parseParticipantBlock(participantsBlock, role);
+      for (const p of parsed) records.push({ filePath, sharedAt, ...p });
+    }
+  }
+
+  return records;
 }
 
 // ─── Path analysis ────────────────────────────────────────────────────────────
@@ -259,14 +343,28 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
       return;
     }
 
-    // ── Parse Notes Details.csv for metadata ─────────────────────────────
+    // ── Parse CSV metadata files ──────────────────────────────────────────
     let metadataMap = new Map<string, NoteMetadata>();
-    const csvEntry = csvPrefix !== null
-      ? directory.files.find(f => f.path === `${csvPrefix}Notes Details.csv`)
-      : null;
-    if (csvEntry) {
-      const buf = await csvEntry.buffer();
-      metadataMap = parseNotesCsv(buf.toString('utf-8'));
+    let participantRecords: ParticipantRecord[] = [];
+
+    if (csvPrefix !== null) {
+      const notesCsvEntry = directory.files.find(f => f.path === `${csvPrefix}Notes Details.csv`);
+      if (notesCsvEntry) {
+        const buf = await notesCsvEntry.buffer();
+        metadataMap = parseNotesCsv(buf.toString('utf-8'));
+      }
+
+      const sharedCsvEntry = directory.files.find(f => f.path === `${csvPrefix}Shared Notes Info.csv`);
+      if (sharedCsvEntry) {
+        const buf = await sharedCsvEntry.buffer();
+        participantRecords.push(...parseSharedNotesCsv(buf.toString('utf-8'), 'sharer'));
+      }
+
+      const subscribedCsvEntry = directory.files.find(f => f.path === `${csvPrefix}Subscribed Notes Info.csv`);
+      if (subscribedCsvEntry) {
+        const buf = await subscribedCsvEntry.buffer();
+        participantRecords.push(...parseSharedNotesCsv(buf.toString('utf-8'), 'owner'));
+      }
     }
 
     // ── Collect note .txt files (skip Recently Deleted) ───────────────────
@@ -316,6 +414,9 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
     }
 
     // ── Import notes ──────────────────────────────────────────────────────
+    // filePath → noteId, used later to link import_participants to notes
+    const filePathToNoteId = new Map<string, string>();
+
     for (const entry of noteEntries) {
       try {
         // Path relative to notesPrefix, e.g. "Work/Rate limiting/Rate limiting.txt"
@@ -323,9 +424,8 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
         const parts = rel.split('/').filter(Boolean);
 
         // parts examples:
-        //   ["✅.txt"]                                → shouldn't happen (no wrapping folder)
-        //   ["✅", "✅.txt"]                          → root-level note
-        //   ["✅", "✅-1.txt"]                        → root-level note (duplicate title)
+        //   ["✅", "✅.txt"]                              → root-level note
+        //   ["✅", "✅-1.txt"]                            → root-level note (duplicate title)
         //   ["Work", "Rate limiting", "Rate limiting.txt"] → note in folder "Work"
 
         if (parts.length < 2) {
@@ -337,12 +437,7 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
         const baseTitle = stripNSuffix(fileName);
 
         let folderId: string | null = null;
-
-        if (parts.length === 2) {
-          // Root-level note: parts[0] is the wrapper dir (same as note title)
-          folderId = null;
-        } else {
-          // Note inside a folder: parts[0] is the Apple Notes folder name
+        if (parts.length >= 3) {
           folderId = getOrCreateFolder(parts[0]);
         }
 
@@ -350,10 +445,8 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
         const raw = buf.toString('utf-8');
         const { title: parsedTitle, bodyJson, bodyText } = parseTxtFile(raw);
 
-        // Prefer parsed title from file content; fall back to folder/file name
         const title = parsedTitle || baseTitle;
 
-        // Look up metadata from CSV (match by title)
         const meta = metadataMap.get(title) || metadataMap.get(baseTitle);
         const createdAt = meta?.createdAt ?? now0;
         const modifiedAt = meta?.modifiedAt ?? now0;
@@ -365,11 +458,18 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(noteId, userId, title, bodyJson, bodyText, folderId, pinned, createdAt, modifiedAt);
 
-        const revId = nanoid();
+        // Full metadata snapshot in first revision
         db.prepare(`
-          INSERT INTO note_revisions (id, note_id, body, body_text, saved_by, created_at)
-          VALUES (?, ?, ?, ?, 'import', ?)
-        `).run(revId, noteId, bodyJson, bodyText, createdAt);
+          INSERT INTO note_revisions
+            (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, '[]', ?, 0, ?, 'import', ?)
+        `).run(nanoid(), noteId, title, bodyJson, bodyText, folderId, pinned, createdAt, createdAt);
+
+        // Track file path → note id for participant linking
+        filePathToNoteId.set(rel, noteId);
+        // Also store without the wrapper dir component for CSV path matching
+        // CSV paths look like "Work/Rate limiting/Rate limiting.txt" (relative to Notes/)
+        filePathToNoteId.set(entry.path.slice(notesPrefix.length), noteId);
 
         job.imported++;
         job.progress = Math.round((job.imported / job.total) * 100);
@@ -377,6 +477,32 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
         console.error(`[import] Error processing ${entry.path}:`, err);
         job.skipped++;
       }
+    }
+
+    // ── Store import participants ──────────────────────────────────────────
+    const insertParticipant = db.prepare(`
+      INSERT INTO import_participants
+        (id, user_id, note_id, display_name, email_masked, permission, acceptance, role, apple_shared_at, import_source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'apple_notes', ?)
+    `);
+
+    for (const p of participantRecords) {
+      // CSV file paths are relative to the iCloud Notes/ root, e.g.
+      // "Notes/Work/Rate limiting/Rate limiting.txt"
+      // Strip the "Notes/" prefix to match our filePathToNoteId keys
+      const relPath = p.filePath.replace(/^Notes\//, '');
+      const noteId = filePathToNoteId.get(relPath) ?? null;
+
+      insertParticipant.run(
+        nanoid(), userId, noteId,
+        p.displayName || null,
+        p.emailMasked || null,
+        p.permission || null,
+        p.acceptance || null,
+        p.role,
+        p.sharedAt || null,
+        now0,
+      );
     }
 
     job.status = 'done';

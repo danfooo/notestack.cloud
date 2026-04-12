@@ -67,12 +67,36 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS note_revisions (
-    id          TEXT PRIMARY KEY,
-    note_id     TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-    body        TEXT NOT NULL,
-    body_text   TEXT,
-    saved_by    TEXT NOT NULL DEFAULT 'user',
-    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    id              TEXT PRIMARY KEY,
+    note_id         TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    -- Content
+    title           TEXT,
+    body            TEXT NOT NULL,
+    body_text       TEXT,
+    -- Metadata snapshot (all mutable note fields at time of save)
+    folder_id       TEXT,          -- snapshot only; no FK so deletions don't corrupt history
+    tags_json       TEXT,          -- JSON array of tag strings e.g. '["work","idea"]'
+    pinned          INTEGER,
+    archived        INTEGER,
+    note_created_at INTEGER,       -- the user-editable "authored date" on the note
+    -- Revision provenance
+    saved_by        TEXT NOT NULL DEFAULT 'user',  -- 'user' | 'import' | 'claude'
+    created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE IF NOT EXISTS import_participants (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    note_id         TEXT REFERENCES notes(id) ON DELETE SET NULL,
+    -- From Apple's Shared Notes Info.csv / Subscribed Notes Info.csv
+    display_name    TEXT,          -- e.g. "Alice Smith"
+    email_masked    TEXT,          -- e.g. "a*****@web.de" — partial, not usable for invites
+    permission      TEXT,          -- 'READ_WRITE' | 'READ_ONLY'
+    acceptance      TEXT,          -- 'ACCEPTED' | 'INVITED'
+    role            TEXT NOT NULL, -- 'sharer' (you shared to them) | 'owner' (they shared to you)
+    apple_shared_at INTEGER,       -- Shared On date from CSV
+    import_source   TEXT,          -- 'apple_notes'
+    created_at      INTEGER NOT NULL DEFAULT (unixepoch())
   );
 
   CREATE TABLE IF NOT EXISTS thoughts (
@@ -142,6 +166,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_think_runs_prompt_id ON think_runs(prompt_id);
   CREATE INDEX IF NOT EXISTS idx_think_runs_user_id ON think_runs(user_id);
   CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);
+  CREATE INDEX IF NOT EXISTS idx_import_participants_user_id ON import_participants(user_id);
+  CREATE INDEX IF NOT EXISTS idx_import_participants_note_id ON import_participants(note_id);
 `);
 
 export default db;

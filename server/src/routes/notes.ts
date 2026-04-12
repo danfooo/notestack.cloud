@@ -136,19 +136,26 @@ router.post('/', requireAuth, (req: AuthRequest, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, req.userId, title ?? null, body ?? null, bodyText, folder_id ?? null, pinned ? 1 : 0, now, now);
 
-  // Save revision
-  const revId = nanoid();
-  db.prepare(`
-    INSERT INTO note_revisions (id, note_id, body, body_text, saved_by, created_at)
-    VALUES (?, ?, ?, ?, 'user', ?)
-  `).run(revId, id, body ?? '', bodyText, now);
-
   // Handle tags
   if (Array.isArray(tags)) {
     for (const tag of tags) {
       db.prepare('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?, ?)').run(id, tag);
     }
   }
+
+  // Save initial revision — full metadata snapshot
+  const currentTags = db.prepare('SELECT tag FROM note_tags WHERE note_id = ?').all(id) as any[];
+  db.prepare(`
+    INSERT INTO note_revisions
+      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'user', ?)
+  `).run(
+    nanoid(), id, title ?? null, body ?? '', bodyText,
+    folder_id ?? null,
+    JSON.stringify(currentTags.map((t: any) => t.tag)),
+    pinned ? 1 : 0,
+    now, now,
+  );
 
   const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
   res.status(201).json(note);
@@ -188,25 +195,38 @@ router.patch('/:id', requireAuth, async (req: AuthRequest, res) => {
   values.push(id);
   db.prepare(`UPDATE notes SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-  // Save revision if body changed
-  if (body !== undefined) {
-    const bodyText = extractBodyText(body);
-    const revId = nanoid();
-    db.prepare(`
-      INSERT INTO note_revisions (id, note_id, body, body_text, saved_by, created_at)
-      VALUES (?, ?, ?, ?, 'user', ?)
-    `).run(revId, id, body, bodyText, now);
-
-    // Fire-and-forget on_save think prompts
-    triggerOnSavePrompts(req.userId!, id, bodyText);
-  }
-
-  // Update tags
+  // Update tags first so the revision snapshot reflects the new state
   if (Array.isArray(tags)) {
     db.prepare('DELETE FROM note_tags WHERE note_id = ?').run(id);
     for (const tag of tags) {
       db.prepare('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?, ?)').run(id, tag);
     }
+  }
+
+  // Always save a full metadata snapshot on every PATCH (any field change)
+  const afterNote = db.prepare('SELECT * FROM notes WHERE id = ?').get(id) as any;
+  const afterTags = db.prepare('SELECT tag FROM note_tags WHERE note_id = ?').all(id) as any[];
+  const bodyForRev = afterNote.body ?? '';
+  const bodyTextForRev = extractBodyText(bodyForRev);
+
+  db.prepare(`
+    INSERT INTO note_revisions
+      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'user', ?)
+  `).run(
+    nanoid(), id,
+    afterNote.title,
+    bodyForRev, bodyTextForRev,
+    afterNote.folder_id,
+    JSON.stringify(afterTags.map((t: any) => t.tag)),
+    afterNote.pinned,
+    afterNote.archived,
+    afterNote.created_at,
+    now,
+  );
+
+  if (body !== undefined) {
+    triggerOnSavePrompts(req.userId!, id, bodyTextForRev);
   }
 
   const updatedNote = db.prepare('SELECT * FROM notes WHERE id = ?').get(id) as any;
@@ -231,31 +251,61 @@ router.get('/:id/revisions', requireAuth, (req: AuthRequest, res) => {
   const note = db.prepare('SELECT id FROM notes WHERE id = ? AND user_id = ?').get(id, req.userId);
   if (!note) return res.status(404).json({ error: 'Not found' });
 
-  const revisions = db.prepare(
-    'SELECT id, note_id, body_text, saved_by, created_at FROM note_revisions WHERE note_id = ? ORDER BY created_at DESC'
-  ).all(id);
+  const revisions = db.prepare(`
+    SELECT id, note_id, title, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at
+    FROM note_revisions WHERE note_id = ? ORDER BY created_at DESC
+  `).all(id);
   res.json(revisions);
 });
 
 // POST /api/notes/:id/revisions/:rev_id/restore
 router.post('/:id/revisions/:rev_id/restore', requireAuth, (req: AuthRequest, res) => {
   const { id, rev_id } = req.params;
-  const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(id, req.userId);
+  const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(id, req.userId) as any;
   if (!note) return res.status(404).json({ error: 'Not found' });
 
   const revision = db.prepare('SELECT * FROM note_revisions WHERE id = ? AND note_id = ?').get(rev_id, id) as any;
   if (!revision) return res.status(404).json({ error: 'Revision not found' });
 
   const now = Math.floor(Date.now() / 1000);
-  db.prepare('UPDATE notes SET body = ?, body_text = ?, updated_at = ? WHERE id = ?')
-    .run(revision.body, revision.body_text, now, id);
 
-  // Save new revision for the restore
-  const newRevId = nanoid();
+  // Restore all snapshotted fields
   db.prepare(`
-    INSERT INTO note_revisions (id, note_id, body, body_text, saved_by, created_at)
-    VALUES (?, ?, ?, ?, 'user', ?)
-  `).run(newRevId, id, revision.body, revision.body_text, now);
+    UPDATE notes SET
+      title = ?, body = ?, body_text = ?,
+      folder_id = ?, pinned = ?, archived = ?,
+      created_at = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(
+    revision.title, revision.body, revision.body_text,
+    revision.folder_id, revision.pinned ?? 0, revision.archived ?? 0,
+    revision.note_created_at ?? note.created_at,
+    now, id,
+  );
+
+  // Restore tags from snapshot
+  if (revision.tags_json) {
+    db.prepare('DELETE FROM note_tags WHERE note_id = ?').run(id);
+    const restoredTags: string[] = JSON.parse(revision.tags_json);
+    for (const tag of restoredTags) {
+      db.prepare('INSERT OR IGNORE INTO note_tags (note_id, tag) VALUES (?, ?)').run(id, tag);
+    }
+  }
+
+  // Record the restore as a new revision
+  db.prepare(`
+    INSERT INTO note_revisions
+      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'user', ?)
+  `).run(
+    nanoid(), id,
+    revision.title, revision.body, revision.body_text,
+    revision.folder_id, revision.tags_json ?? '[]',
+    revision.pinned ?? 0, revision.archived ?? 0,
+    revision.note_created_at,
+    now,
+  );
 
   const updatedNote = db.prepare('SELECT * FROM notes WHERE id = ?').get(id) as any;
   const tags = db.prepare('SELECT tag FROM note_tags WHERE note_id = ?').all(id) as any[];
