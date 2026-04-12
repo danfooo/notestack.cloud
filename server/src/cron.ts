@@ -120,4 +120,23 @@ async function runScheduledPrompt(runId: string, prompt: any) {
   }
 }
 
+// ── Deferred hard-deletion ────────────────────────────────────────────────────
+// Notes are soft-deleted (deleted_at set). After 30 days they are permanently
+// removed. Runs daily at 03:17 to avoid clustering with other midnight jobs.
+const DELETION_GRACE_SECONDS = 30 * 24 * 60 * 60; // 30 days
+
+cron.schedule('17 3 * * *', () => {
+  try {
+    const cutoff = Math.floor(Date.now() / 1000) - DELETION_GRACE_SECONDS;
+    const result = db.prepare(
+      'DELETE FROM notes WHERE deleted_at IS NOT NULL AND deleted_at < ?'
+    ).run(cutoff);
+    if ((result.changes as number) > 0) {
+      console.log(`[cron] Hard-deleted ${result.changes} note(s) past 30-day grace period`);
+    }
+  } catch (err) {
+    console.error('[cron] Error in deferred hard-deletion:', err);
+  }
+});
+
 export {};

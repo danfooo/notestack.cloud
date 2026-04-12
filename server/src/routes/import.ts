@@ -66,13 +66,17 @@ function sortAttachmentNames(names: string[]): string[] {
 
 // ─── Text → TipTap JSON converter ────────────────────────────────────────────
 
-type LineKind = 'empty' | 'unchecked' | 'checked' | 'bullet' | 'image' | 'text';
+// Two distinct bullet kinds:
+//   dashBullet  ("- text")  → bulletList with listStyle: 'dash'
+//   starBullet  ("* text")  → bulletList (standard round bullets)
+// They are kept separate so the client can style them differently.
+type LineKind = 'empty' | 'unchecked' | 'checked' | 'dashBullet' | 'starBullet' | 'image' | 'text';
 
 function classifyLine(line: string): { kind: LineKind; text: string; imageCount?: number } {
-  if (UNCHECKED_RE.test(line)) return { kind: 'unchecked', text: line.replace(UNCHECKED_RE, '').trimEnd() };
-  if (CHECKED_RE.test(line))   return { kind: 'checked',   text: line.replace(CHECKED_RE, '').trimEnd() };
-  if (DASH_BULLET.test(line))  return { kind: 'bullet',    text: line.slice(2).trimEnd() };
-  if (STAR_BULLET.test(line))  return { kind: 'bullet',    text: line.slice(2).trimEnd() };
+  if (UNCHECKED_RE.test(line)) return { kind: 'unchecked',  text: line.replace(UNCHECKED_RE, '').trimEnd() };
+  if (CHECKED_RE.test(line))   return { kind: 'checked',    text: line.replace(CHECKED_RE, '').trimEnd() };
+  if (DASH_BULLET.test(line))  return { kind: 'dashBullet', text: line.slice(2).trimEnd() };
+  if (STAR_BULLET.test(line))  return { kind: 'starBullet', text: line.slice(2).trimEnd() };
   if (!line.trim()) return { kind: 'empty', text: '' };
 
   // Count ￼ characters on this line
@@ -133,18 +137,24 @@ function textToTipTap(lines: string[], attachmentUrls: string[] = []): string {
       continue;
     }
 
-    if (kind === 'bullet') {
+    if (kind === 'dashBullet' || kind === 'starBullet') {
+      // Collect consecutive items of the same marker. A switch from - to * (or vice
+      // versa) starts a new list so the two styles are visually distinct.
       const items: any[] = [];
       while (i < lines.length) {
         const c = classifyLine(lines[i]);
-        if (c.kind !== 'bullet') break;
+        if (c.kind !== kind) break;
         items.push({
           type: 'listItem',
           content: [{ type: 'paragraph', content: makeTextNode(c.text) }],
         });
         i++;
       }
-      if (items.length) content.push({ type: 'bulletList', content: items });
+      if (items.length) {
+        const node: any = { type: 'bulletList', content: items };
+        if (kind === 'dashBullet') node.attrs = { listStyle: 'dash' };
+        content.push(node);
+      }
       continue;
     }
 
@@ -339,7 +349,7 @@ function parseSharedNotesCsv(csv: string, role: 'sharer' | 'owner'): Participant
 //   - Strip `-N` numeric suffix from note filename to get canonical title
 //   - Non-.txt files in the same directory as a .txt are attachments
 //
-// Recently Deleted notes are in a parallel `Recently Deleted/` directory — skip by default.
+// Recently Deleted notes are in a parallel `Recently Deleted/` directory — imported with deleted_at set.
 
 // ─── Main import processor ────────────────────────────────────────────────────
 
@@ -399,18 +409,30 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
       }
     }
 
-    // ── Collect note .txt files (skip Recently Deleted) ───────────────────
+    // ── Find the Recently Deleted directory prefix ────────────────────────
+    let recentlyDeletedPrefix: string | null = null;
+    for (const entry of directory.files) {
+      const m = entry.path.match(/^(.*\/)?(iCloud Notes\/)?Recently Deleted\//);
+      if (m && (recentlyDeletedPrefix === null || m[0].length < recentlyDeletedPrefix.length)) {
+        recentlyDeletedPrefix = m[0];
+      }
+    }
+
+    // ── Collect note .txt files (Notes/ + Recently Deleted/) ─────────────
+    const ATTACH_EXTS_SET = new Set(['jpg', 'jpeg', 'png', 'heic', 'gif', 'webp', 'pdf', 'm4a', 'mov', 'mp4']);
+
     const noteEntries = directory.files.filter(f => {
-      if (!f.path.startsWith(notesPrefix!)) return false;
-      if (f.path.includes('Recently Deleted/')) return false;
-      return f.path.endsWith('.txt');
+      if (f.path.startsWith(notesPrefix!)) return f.path.endsWith('.txt');
+      if (recentlyDeletedPrefix && f.path.startsWith(recentlyDeletedPrefix)) return f.path.endsWith('.txt');
+      return false;
     });
 
     const attachmentEntries = directory.files.filter(f => {
-      if (!f.path.startsWith(notesPrefix!)) return false;
-      if (f.path.includes('Recently Deleted/')) return false;
+      const underNotes = f.path.startsWith(notesPrefix!);
+      const underDeleted = recentlyDeletedPrefix ? f.path.startsWith(recentlyDeletedPrefix) : false;
+      if (!underNotes && !underDeleted) return false;
       const ext = f.path.split('.').pop()?.toLowerCase() ?? '';
-      return ['jpg', 'jpeg', 'png', 'heic', 'gif', 'webp', 'pdf', 'm4a', 'mov', 'mp4'].includes(ext);
+      return ATTACH_EXTS_SET.has(ext);
     });
 
     job.total = noteEntries.length;
@@ -440,16 +462,16 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
 
     // Map from wrapper-dir path → sorted attachment filenames in that dir
     const dirAttachments = new Map<string, string[]>();
-    const ATTACH_EXTS = new Set(['jpg', 'jpeg', 'png', 'heic', 'gif', 'webp', 'pdf', 'm4a', 'mov', 'mp4']);
 
     for (const entry of attachmentEntries) {
-      const rel = entry.path.slice(notesPrefix.length);
+      const prefix = entry.path.startsWith(notesPrefix) ? notesPrefix : (recentlyDeletedPrefix ?? notesPrefix);
+      const rel = entry.path.slice(prefix.length);
       const parts = rel.split('/').filter(Boolean);
       if (parts.length < 2) continue;
       // The wrapper dir is everything except the last component (the filename)
       const dirKey = parts.slice(0, -1).join('/');
       const ext = (parts[parts.length - 1].split('.').pop() ?? '').toLowerCase();
-      if (!ATTACH_EXTS.has(ext)) continue;
+      if (!ATTACH_EXTS_SET.has(ext)) continue;
       if (!dirAttachments.has(dirKey)) dirAttachments.set(dirKey, []);
       dirAttachments.get(dirKey)!.push(parts[parts.length - 1]);
     }
@@ -465,8 +487,12 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
 
     for (const entry of noteEntries) {
       try {
-        // Path relative to notesPrefix, e.g. "Work/Rate limiting/Rate limiting.txt"
-        const rel = entry.path.slice(notesPrefix.length);
+        // Determine if this note came from Recently Deleted/
+        const isDeletedNote = recentlyDeletedPrefix ? entry.path.startsWith(recentlyDeletedPrefix) : false;
+        const entryPrefix = isDeletedNote ? recentlyDeletedPrefix! : notesPrefix;
+
+        // Path relative to its section root, e.g. "Work/Rate limiting/Rate limiting.txt"
+        const rel = entry.path.slice(entryPrefix.length);
         const parts = rel.split('/').filter(Boolean);
 
         // parts examples:
@@ -494,7 +520,7 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
         const attachFileNames = dirAttachments.get(dirKey) ?? [];
         const attachmentUrls: string[] = [];
         for (const filename of attachFileNames) {
-          const srcEntry = attachmentEntries.find(e => e.path.endsWith(`/${dirKey}/${filename}`) || e.path === `${notesPrefix}${dirKey}/${filename}`);
+          const srcEntry = attachmentEntries.find(e => e.path.endsWith(`/${dirKey}/${filename}`) || e.path === `${entryPrefix}${dirKey}/${filename}`);
           if (!srcEntry) continue;
           try {
             const buf = await srcEntry.buffer();
@@ -517,11 +543,15 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
         const modifiedAt = meta?.modifiedAt ?? now0;
         const pinned = meta?.pinned ? 1 : 0;
 
+        // Recently Deleted notes arrive pre-deleted. Set deleted_at = now so the
+        // 30-day deferred hard-deletion timer starts from the time of import.
+        const deletedAt = isDeletedNote ? now0 : null;
+
         const noteId = nanoid();
         db.prepare(`
-          INSERT INTO notes (id, user_id, title, body, body_text, folder_id, pinned, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(noteId, userId, title, bodyJson, bodyText, folderId, pinned, createdAt, modifiedAt);
+          INSERT INTO notes (id, user_id, title, body, body_text, folder_id, pinned, deleted_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(noteId, userId, title, bodyJson, bodyText, folderId, pinned, deletedAt, createdAt, modifiedAt);
 
         // Full metadata snapshot in first revision
         db.prepare(`

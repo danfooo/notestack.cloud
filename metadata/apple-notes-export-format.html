@@ -50,7 +50,7 @@
 <pre><code>[archive-name].zip
 └── iCloud Notes/
     ├── Notes/                      <span class="comment"># all live notes</span>
-    ├── Recently Deleted/           <span class="comment"># deleted notes — same structure, not imported</span>
+    ├── Recently Deleted/           <span class="comment"># deleted notes — same structure, imported with deleted_at set</span>
     ├── Notes Details.csv           <span class="comment"># metadata: dates, pinned, deleted</span>
     ├── Shared Notes Info.csv       <span class="comment"># notes you shared with others</span>
     └── Subscribed Notes Info.csv   <span class="comment"># notes others shared with you</span>
@@ -190,14 +190,14 @@ Some plain notes about the trip.
     <td>ASCII hyphen</td>
     <td class="hex">2d 20</td>
     <td><code>- text</code></td>
-    <td>Bullet list item</td>
+    <td>Dash-style bullet list item</td>
   </tr>
   <tr>
     <td>*</td>
     <td>ASCII asterisk</td>
     <td class="hex">2a 20</td>
     <td><code>* text</code></td>
-    <td>Bullet list item (alternate marker — same meaning)</td>
+    <td>Round-bullet list item (visually distinct from <code>-</code>)</td>
   </tr>
   <tr>
     <td>￼</td>
@@ -230,9 +230,15 @@ Some plain notes about the trip.
 
 <h3>Bullet list style</h3>
 <p>
-  Both <code>- </code> and <code>* </code> markers mean the same thing: an unordered bullet list item.
-  Neither Apple Notes nor the brains import distinguishes between them — both become a
-  <code>bulletList</code> → <code>listItem</code> in TipTap. The original marker character is not preserved.
+  The two markers are treated as distinct list styles in brains:
+</p>
+<ul>
+  <li><code>* text</code> → standard <code>bulletList</code> (round bullets, the TipTap default)</li>
+  <li><code>- text</code> → <code>bulletList</code> with <code>attrs.listStyle = "dash"</code> (rendered as dash bullets via a client TipTap extension)</li>
+</ul>
+<p>
+  A run of consecutive <code>-</code> items forms one dash list; a run of consecutive <code>*</code> items
+  forms one bullet list. Switching markers mid-sequence starts a new list.
 </p>
 
 <h3>What Apple Notes styles are lost in the export</h3>
@@ -250,7 +256,8 @@ Some plain notes about the trip.
   <tr><td>Bold / italic / underline</td><td>Not preserved</td></tr>
   <tr><td>Checklist (unchecked)</td><td><code>TAB + ◦ + TAB + text</code></td></tr>
   <tr><td>Checklist (checked)</td><td><code>TAB + ✓ + TAB + text</code></td></tr>
-  <tr><td>Bulleted list</td><td><code>- text</code> or <code>* text</code> (both identical)</td></tr>
+  <tr><td>Bulleted list (<code>*</code> marker)</td><td><code>* text</code> — round bullets</td></tr>
+  <tr><td>Dash list (<code>-</code> marker)</td><td><code>- text</code> — dash bullets (visually distinct)</td></tr>
   <tr><td>Numbered list</td><td>Plain text — e.g. <code>1. Item</code> — no special encoding</td></tr>
   <tr><td>Table</td><td>Plain text — no structural encoding found</td></tr>
   <tr><td>Embedded image / scan</td><td><code>U+FFFC</code> inline; actual file is a sibling in the same directory (see §5)</td></tr>
@@ -416,8 +423,17 @@ Recommend resurfacing before winter.
   The <code>Recently Deleted/</code> directory has the same structure as <code>Notes/</code>
   and contains notes the user deleted before their export was generated.
   These notes also appear in <code>Notes Details.csv</code> with <code>Deleted: Yes</code>.
-  They are <strong>not imported</strong>.
 </p>
+<p>
+  brains <strong>imports</strong> Recently Deleted notes with <code>deleted_at</code> set to the
+  time of import. They are immediately in the soft-deleted state and will be permanently
+  removed by the 30-day deferred hard-deletion cron job unless the user restores them first.
+</p>
+<div class="callout info">
+  <strong>30-day grace period:</strong> All soft-deleted notes (whether deleted by the user in brains
+  or imported from Recently Deleted) are permanently hard-deleted 30 days after <code>deleted_at</code>.
+  A daily cron job enforces this.
+</div>
 
 <h2>11. TipTap Mapping</h2>
 
@@ -426,7 +442,8 @@ Recommend resurfacing before winter.
   <tr><td>Plain text paragraph</td><td><code>paragraph</code></td></tr>
   <tr><td>Unchecked checklist item (<code>TAB◦TAB</code>)</td><td><code>taskList</code> → <code>taskItem</code> <code>attrs.checked=false</code></td></tr>
   <tr><td>Checked checklist item (<code>TAB✓TAB</code>)</td><td><code>taskList</code> → <code>taskItem</code> <code>attrs.checked=true</code></td></tr>
-  <tr><td>Dash or asterisk bullet (<code>- </code> / <code>* </code>)</td><td><code>bulletList</code> → <code>listItem</code> (no distinction between the two)</td></tr>
+  <tr><td>Asterisk bullet (<code>* </code>)</td><td><code>bulletList</code> → <code>listItem</code> (round bullets, no extra attrs)</td></tr>
+  <tr><td>Dash bullet (<code>- </code>)</td><td><code>bulletList</code> → <code>listItem</code> with <code>attrs.listStyle = "dash"</code></td></tr>
   <tr><td>Image placeholder (<code>U+FFFC</code>)</td><td><code>image</code> node, <code>src</code> resolved from sorted sibling attachment files</td></tr>
   <tr><td>Blank line</td><td>Block separator — not emitted as a node</td></tr>
   <tr><td>Any styled text (heading, bold, etc.)</td><td><code>paragraph</code> — style information not available in export</td></tr>
