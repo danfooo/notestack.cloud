@@ -44,20 +44,42 @@ const DASH_BULLET  = /^- /;
 const STAR_BULLET  = /^\* /;
 const OBJ_CHAR     = '\uFFFC';
 
+// ─── Attachment ordering ──────────────────────────────────────────────────────
+// Apple names attachments using the same suffix convention as note files:
+//   Attachment.png, Attachment-1.png, Attachment-2.png, ...
+// The no-suffix file is first; -1, -2, ... follow in order.
+// Each U+FFFC in the text (reading top to bottom) corresponds to the next
+// attachment in this sorted list.
+
+function sortAttachmentNames(names: string[]): string[] {
+  return [...names].sort((a, b) => {
+    // Strip extension for comparison
+    const stripExt = (s: string) => s.replace(/\.[^.]+$/, '');
+    const baseA = stripExt(a).replace(/-(\d+)$/, '');
+    const baseB = stripExt(b).replace(/-(\d+)$/, '');
+    if (baseA !== baseB) return baseA.localeCompare(baseB);
+    const numA = parseInt(stripExt(a).match(/-(\d+)$/)?.[1] ?? '-1');
+    const numB = parseInt(stripExt(b).match(/-(\d+)$/)?.[1] ?? '-1');
+    return numA - numB;
+  });
+}
+
 // ─── Text → TipTap JSON converter ────────────────────────────────────────────
 
-type LineKind = 'empty' | 'unchecked' | 'checked' | 'bullet' | 'text';
+type LineKind = 'empty' | 'unchecked' | 'checked' | 'bullet' | 'image' | 'text';
 
-function classifyLine(line: string): { kind: LineKind; text: string } {
+function classifyLine(line: string): { kind: LineKind; text: string; imageCount?: number } {
   if (UNCHECKED_RE.test(line)) return { kind: 'unchecked', text: line.replace(UNCHECKED_RE, '').trimEnd() };
   if (CHECKED_RE.test(line))   return { kind: 'checked',   text: line.replace(CHECKED_RE, '').trimEnd() };
   if (DASH_BULLET.test(line))  return { kind: 'bullet',    text: line.slice(2).trimEnd() };
   if (STAR_BULLET.test(line))  return { kind: 'bullet',    text: line.slice(2).trimEnd() };
-
-  // A line that is only ￼ characters (embedded object placeholder) — skip it
-  if (line.replace(new RegExp(OBJ_CHAR, 'g'), '').trim() === '') return { kind: 'empty', text: '' };
-
   if (!line.trim()) return { kind: 'empty', text: '' };
+
+  // Count ￼ characters on this line
+  const objCount = (line.match(new RegExp(OBJ_CHAR, 'g')) ?? []).length;
+  if (objCount > 0 && line.replace(new RegExp(OBJ_CHAR, 'g'), '').trim() === '') {
+    return { kind: 'image', text: '', imageCount: objCount };
+  }
 
   return { kind: 'text', text: line.trimEnd() };
 }
@@ -66,20 +88,36 @@ function makeTextNode(text: string) {
   return text ? [{ type: 'text', text }] : [];
 }
 
-function textToTipTap(lines: string[]): string {
+// attachmentUrls: ordered list of served URLs for attachments in this note.
+// Each 'image' line pops from the front of this queue.
+function textToTipTap(lines: string[], attachmentUrls: string[] = []): string {
   const content: any[] = [];
   let i = 0;
+  let attachIdx = 0;
 
   while (i < lines.length) {
-    const { kind, text } = classifyLine(lines[i]);
+    const classified = classifyLine(lines[i]);
+    const { kind, text } = classified;
 
     if (kind === 'empty') {
       i++;
       continue;
     }
 
+    if (kind === 'image') {
+      const count = classified.imageCount ?? 1;
+      for (let j = 0; j < count; j++) {
+        const url = attachmentUrls[attachIdx++] ?? null;
+        if (url) {
+          content.push({ type: 'image', attrs: { src: url, alt: null, title: null } });
+        }
+        // If no URL available (attachment file missing), silently skip
+      }
+      i++;
+      continue;
+    }
+
     if (kind === 'unchecked' || kind === 'checked') {
-      // Collect a run of consecutive checklist items (checked and unchecked can mix)
       const items: any[] = [];
       while (i < lines.length) {
         const c = classifyLine(lines[i]);
@@ -96,7 +134,6 @@ function textToTipTap(lines: string[]): string {
     }
 
     if (kind === 'bullet') {
-      // Collect a run of consecutive bullet items
       const items: any[] = [];
       while (i < lines.length) {
         const c = classifyLine(lines[i]);
@@ -111,7 +148,6 @@ function textToTipTap(lines: string[]): string {
       continue;
     }
 
-    // Regular text paragraph
     content.push({ type: 'paragraph', content: makeTextNode(text) });
     i++;
   }
@@ -120,7 +156,7 @@ function textToTipTap(lines: string[]): string {
   return JSON.stringify({ type: 'doc', content });
 }
 
-function parseTxtFile(raw: string): { title: string; bodyJson: string; bodyText: string } {
+function parseTxtFile(raw: string, attachmentUrls: string[] = []): { title: string; bodyJson: string; bodyText: string } {
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
 
   // First non-empty line is the title
@@ -133,7 +169,7 @@ function parseTxtFile(raw: string): { title: string; bodyJson: string; bodyText:
   while (bodyStart < lines.length && !lines[bodyStart].trim()) bodyStart++;
 
   const bodyLines = lines.slice(bodyStart);
-  const bodyJson = textToTipTap(bodyLines);
+  const bodyJson = textToTipTap(bodyLines, attachmentUrls);
   const bodyText = bodyLines
     .map(l => classifyLine(l).text)
     .filter(Boolean)
@@ -305,10 +341,6 @@ function parseSharedNotesCsv(csv: string, role: 'sharer' | 'owner'): Participant
 //
 // Recently Deleted notes are in a parallel `Recently Deleted/` directory — skip by default.
 
-function stripNSuffix(name: string): string {
-  return name.replace(/-\d+$/, '');
-}
-
 // ─── Main import processor ────────────────────────────────────────────────────
 
 async function processImport(jobId: string, zipPath: string, userId: string) {
@@ -374,7 +406,6 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
       return f.path.endsWith('.txt');
     });
 
-    // Count of attachment files (non-txt, non-csv, non-.DS_Store)
     const attachmentEntries = directory.files.filter(f => {
       if (!f.path.startsWith(notesPrefix!)) return false;
       if (f.path.includes('Recently Deleted/')) return false;
@@ -401,16 +432,31 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
       return folderId;
     }
 
-    // ── Import attachments ────────────────────────────────────────────────
+    // ── Build per-wrapper-dir attachment index ────────────────────────────
+    // Key: wrapper directory path (relative to notesPrefix), e.g. "Work/Rate limiting"
+    // Value: sorted list of attachment filenames in that directory
     const attachmentsDir = join(process.cwd(), 'data', 'attachments', userId);
     mkdirSync(attachmentsDir, { recursive: true });
 
+    // Map from wrapper-dir path → sorted attachment filenames in that dir
+    const dirAttachments = new Map<string, string[]>();
+    const ATTACH_EXTS = new Set(['jpg', 'jpeg', 'png', 'heic', 'gif', 'webp', 'pdf', 'm4a', 'mov', 'mp4']);
+
     for (const entry of attachmentEntries) {
-      try {
-        const buf = await entry.buffer();
-        const ext = '.' + (entry.path.split('.').pop()?.toLowerCase() ?? 'bin');
-        writeFileSync(join(attachmentsDir, nanoid() + ext), buf);
-      } catch { /* skip failed attachments */ }
+      const rel = entry.path.slice(notesPrefix.length);
+      const parts = rel.split('/').filter(Boolean);
+      if (parts.length < 2) continue;
+      // The wrapper dir is everything except the last component (the filename)
+      const dirKey = parts.slice(0, -1).join('/');
+      const ext = (parts[parts.length - 1].split('.').pop() ?? '').toLowerCase();
+      if (!ATTACH_EXTS.has(ext)) continue;
+      if (!dirAttachments.has(dirKey)) dirAttachments.set(dirKey, []);
+      dirAttachments.get(dirKey)!.push(parts[parts.length - 1]);
+    }
+
+    // Sort each directory's attachment list in Apple's insertion order
+    for (const [dir, files] of dirAttachments) {
+      dirAttachments.set(dir, sortAttachmentNames(files));
     }
 
     // ── Import notes ──────────────────────────────────────────────────────
@@ -433,21 +479,40 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
           continue;
         }
 
-        const fileName = parts[parts.length - 1].replace('.txt', '');
-        const baseTitle = stripNSuffix(fileName);
+        // Title comes from the wrapper DIRECTORY name — never from the filename.
+        // The filename may have an Apple-added -N suffix for duplicate titles;
+        // the directory is always the original title.
+        const wrapperDir = parts.length === 2 ? parts[0] : parts[parts.length - 2];
+        const dirKey = parts.slice(0, -1).join('/');
 
         let folderId: string | null = null;
         if (parts.length >= 3) {
           folderId = getOrCreateFolder(parts[0]);
         }
 
+        // Resolve attachment files for this note's directory and save them
+        const attachFileNames = dirAttachments.get(dirKey) ?? [];
+        const attachmentUrls: string[] = [];
+        for (const filename of attachFileNames) {
+          const srcEntry = attachmentEntries.find(e => e.path.endsWith(`/${dirKey}/${filename}`) || e.path === `${notesPrefix}${dirKey}/${filename}`);
+          if (!srcEntry) continue;
+          try {
+            const buf = await srcEntry.buffer();
+            const ext = '.' + (filename.split('.').pop()?.toLowerCase() ?? 'bin');
+            const savedName = nanoid() + ext;
+            writeFileSync(join(attachmentsDir, savedName), buf);
+            attachmentUrls.push(`/attachments/${userId}/${savedName}`);
+          } catch { /* skip */ }
+        }
+
         const buf = await entry.buffer();
         const raw = buf.toString('utf-8');
-        const { title: parsedTitle, bodyJson, bodyText } = parseTxtFile(raw);
+        const { title: parsedTitle, bodyJson, bodyText } = parseTxtFile(raw, attachmentUrls);
 
-        const title = parsedTitle || baseTitle;
+        // Use file content's first line as title; fall back to wrapper directory name
+        const title = parsedTitle || wrapperDir;
 
-        const meta = metadataMap.get(title) || metadataMap.get(baseTitle);
+        const meta = metadataMap.get(title) || metadataMap.get(wrapperDir);
         const createdAt = meta?.createdAt ?? now0;
         const modifiedAt = meta?.modifiedAt ?? now0;
         const pinned = meta?.pinned ? 1 : 0;
