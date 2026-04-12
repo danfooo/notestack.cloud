@@ -5,10 +5,16 @@ import multer from 'multer';
 import { nanoid } from 'nanoid';
 import { db } from '../db/index.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
+import {
+  classifyLine, sortAttachmentNames, parseTxtFile,
+  parseNotesCsv, parseSharedNotesCsv,
+  type NoteMetadata, type ParticipantRecord,
+} from '../services/importParser.js';
 
 const router = Router();
 
-const UPLOAD_DIR = join(process.cwd(), 'data', 'tmp');
+const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data');
+const UPLOAD_DIR = join(DATA_DIR, 'tmp');
 mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const upload = multer({
@@ -32,305 +38,9 @@ const jobs = new Map<string, {
   finished_at?: number;
 }>();
 
-// ─── Apple Notes format constants ────────────────────────────────────────────
-// From hex analysis of real Apple privacy exports:
-//   09 e2 97 a6 09  →  TAB + U+25E6 (WHITE BULLET ◦) + TAB  = unchecked checklist item
-//   09 e2 9c 93 09  →  TAB + U+2713 (CHECK MARK ✓) + TAB    = checked checklist item
-//   ef bf bc        →  U+FFFC (OBJECT REPLACEMENT CHARACTER ￼) = embedded image/attachment
-
-const UNCHECKED_RE = /^\t\u25E6\t/;  // TAB + ◦ + TAB
-const CHECKED_RE   = /^\t\u2713\t/;  // TAB + ✓ + TAB
-const DASH_BULLET  = /^- /;
-const STAR_BULLET  = /^\* /;
-const OBJ_CHAR     = '\uFFFC';
-
-// ─── Attachment ordering ──────────────────────────────────────────────────────
-// Apple names attachments using the same suffix convention as note files:
-//   Attachment.png, Attachment-1.png, Attachment-2.png, ...
-// The no-suffix file is first; -1, -2, ... follow in order.
-// Each U+FFFC in the text (reading top to bottom) corresponds to the next
-// attachment in this sorted list.
-
-function sortAttachmentNames(names: string[]): string[] {
-  return [...names].sort((a, b) => {
-    // Strip extension for comparison
-    const stripExt = (s: string) => s.replace(/\.[^.]+$/, '');
-    const baseA = stripExt(a).replace(/-(\d+)$/, '');
-    const baseB = stripExt(b).replace(/-(\d+)$/, '');
-    if (baseA !== baseB) return baseA.localeCompare(baseB);
-    const numA = parseInt(stripExt(a).match(/-(\d+)$/)?.[1] ?? '-1');
-    const numB = parseInt(stripExt(b).match(/-(\d+)$/)?.[1] ?? '-1');
-    return numA - numB;
-  });
-}
-
-// ─── Text → TipTap JSON converter ────────────────────────────────────────────
-
-// Two distinct bullet kinds:
-//   dashBullet  ("- text")  → bulletList with listStyle: 'dash'
-//   starBullet  ("* text")  → bulletList (standard round bullets)
-// They are kept separate so the client can style them differently.
-type LineKind = 'empty' | 'unchecked' | 'checked' | 'dashBullet' | 'starBullet' | 'image' | 'text';
-
-function classifyLine(line: string): { kind: LineKind; text: string; imageCount?: number } {
-  if (UNCHECKED_RE.test(line)) return { kind: 'unchecked',  text: line.replace(UNCHECKED_RE, '').trimEnd() };
-  if (CHECKED_RE.test(line))   return { kind: 'checked',    text: line.replace(CHECKED_RE, '').trimEnd() };
-  if (DASH_BULLET.test(line))  return { kind: 'dashBullet', text: line.slice(2).trimEnd() };
-  if (STAR_BULLET.test(line))  return { kind: 'starBullet', text: line.slice(2).trimEnd() };
-  if (!line.trim()) return { kind: 'empty', text: '' };
-
-  // Count ￼ characters on this line
-  const objCount = (line.match(new RegExp(OBJ_CHAR, 'g')) ?? []).length;
-  if (objCount > 0 && line.replace(new RegExp(OBJ_CHAR, 'g'), '').trim() === '') {
-    return { kind: 'image', text: '', imageCount: objCount };
-  }
-
-  return { kind: 'text', text: line.trimEnd() };
-}
-
-function makeTextNode(text: string) {
-  return text ? [{ type: 'text', text }] : [];
-}
-
-// attachmentUrls: ordered list of served URLs for attachments in this note.
-// Each 'image' line pops from the front of this queue.
-function textToTipTap(lines: string[], attachmentUrls: string[] = []): string {
-  const content: any[] = [];
-  let i = 0;
-  let attachIdx = 0;
-
-  while (i < lines.length) {
-    const classified = classifyLine(lines[i]);
-    const { kind, text } = classified;
-
-    if (kind === 'empty') {
-      i++;
-      continue;
-    }
-
-    if (kind === 'image') {
-      const count = classified.imageCount ?? 1;
-      for (let j = 0; j < count; j++) {
-        const url = attachmentUrls[attachIdx++] ?? null;
-        if (url) {
-          content.push({ type: 'image', attrs: { src: url, alt: null, title: null } });
-        }
-        // If no URL available (attachment file missing), silently skip
-      }
-      i++;
-      continue;
-    }
-
-    if (kind === 'unchecked' || kind === 'checked') {
-      const items: any[] = [];
-      while (i < lines.length) {
-        const c = classifyLine(lines[i]);
-        if (c.kind !== 'unchecked' && c.kind !== 'checked') break;
-        items.push({
-          type: 'taskItem',
-          attrs: { checked: c.kind === 'checked' },
-          content: [{ type: 'paragraph', content: makeTextNode(c.text) }],
-        });
-        i++;
-      }
-      if (items.length) content.push({ type: 'taskList', content: items });
-      continue;
-    }
-
-    if (kind === 'dashBullet' || kind === 'starBullet') {
-      // Collect consecutive items of the same marker. A switch from - to * (or vice
-      // versa) starts a new list so the two styles are visually distinct.
-      const items: any[] = [];
-      while (i < lines.length) {
-        const c = classifyLine(lines[i]);
-        if (c.kind !== kind) break;
-        items.push({
-          type: 'listItem',
-          content: [{ type: 'paragraph', content: makeTextNode(c.text) }],
-        });
-        i++;
-      }
-      if (items.length) {
-        const node: any = { type: 'bulletList', content: items };
-        if (kind === 'dashBullet') node.attrs = { listStyle: 'dash' };
-        content.push(node);
-      }
-      continue;
-    }
-
-    content.push({ type: 'paragraph', content: makeTextNode(text) });
-    i++;
-  }
-
-  if (content.length === 0) content.push({ type: 'paragraph' });
-  return JSON.stringify({ type: 'doc', content });
-}
-
-function parseTxtFile(raw: string, attachmentUrls: string[] = []): { title: string; bodyJson: string; bodyText: string } {
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
-
-  // First non-empty line is the title
-  let titleIdx = 0;
-  while (titleIdx < lines.length && !lines[titleIdx].trim()) titleIdx++;
-  const title = lines[titleIdx]?.trim() || 'Untitled';
-
-  // Body starts after title + any immediately following blank line
-  let bodyStart = titleIdx + 1;
-  while (bodyStart < lines.length && !lines[bodyStart].trim()) bodyStart++;
-
-  const bodyLines = lines.slice(bodyStart);
-  const bodyJson = textToTipTap(bodyLines, attachmentUrls);
-  const bodyText = bodyLines
-    .map(l => classifyLine(l).text)
-    .filter(Boolean)
-    .join(' ');
-
-  return { title, bodyJson, bodyText };
-}
-
-// ─── Notes Details.csv parser ─────────────────────────────────────────────────
-// Header: Title, Created On, Modified On, Pinned, Deleted, Drawing/Handwriting, ContentHash at Import
-// Date format: MM-DD-YYYY HH:MM:SS
-
-function parseCsvDate(s: string): number {
-  // "MM-DD-YYYY HH:MM:SS" → Unix timestamp
-  const m = s.trim().match(/^(\d{2})-(\d{2})-(\d{4}) (\d{2}):(\d{2}):(\d{2})$/);
-  if (!m) return Math.floor(Date.now() / 1000);
-  const [, mo, dd, yyyy, hh, mm, ss] = m;
-  return Math.floor(new Date(`${yyyy}-${mo}-${dd}T${hh}:${mm}:${ss}Z`).getTime() / 1000);
-}
-
-function parseCsvLine(line: string): string[] {
-  // Simple CSV parser that handles quoted fields
-  const fields: string[] = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === ',' && !inQuotes) {
-      fields.push(current);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  fields.push(current);
-  return fields;
-}
-
-interface NoteMetadata {
-  createdAt: number;
-  modifiedAt: number;
-  pinned: boolean;
-  deleted: boolean;
-}
-
-function parseNotesCsv(csv: string): Map<string, NoteMetadata> {
-  const map = new Map<string, NoteMetadata>();
-  const lines = csv.split('\n');
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const fields = parseCsvLine(line);
-    if (fields.length < 5) continue;
-    const [title, createdStr, modifiedStr, pinnedStr, deletedStr] = fields;
-    map.set(title.trim(), {
-      createdAt: parseCsvDate(createdStr),
-      modifiedAt: parseCsvDate(modifiedStr),
-      pinned: pinnedStr.trim().toLowerCase() === 'yes',
-      deleted: deletedStr.trim().toLowerCase() === 'yes',
-    });
-  }
-  return map;
-}
-
-// ─── Shared Notes CSV parsers ─────────────────────────────────────────────────
-// Shared Notes Info.csv header:
-//   File Name, Shared On, Last Modified Date, Participants Details
-//
-// Subscribed Notes Info.csv header:
-//   File Name, Owner Details, Last Modified Date, Shared On, Participants Details
-//
-// Participants Details format (pipe-separated entries, semicolon-separated fields):
-//   "Name:Alice; Email:a*****@web.de; Permission:READ_WRITE; Acceptance Status:ACCEPTED | Name:Bob; ..."
-// Owner Details format:
-//   "Name:X; Email:Y"
-
-interface ParticipantRecord {
-  filePath: string;       // the note's relative file path from the CSV
-  sharedAt: number;
-  displayName: string;
-  emailMasked: string;
-  permission: string;
-  acceptance: string;
-  role: 'sharer' | 'owner';
-}
-
-function parseParticipantBlock(block: string, role: 'sharer' | 'owner'): Omit<ParticipantRecord, 'filePath' | 'sharedAt'>[] {
-  const results: Omit<ParticipantRecord, 'filePath' | 'sharedAt'>[] = [];
-  // Each participant separated by " | "
-  const entries = block.split('|').map(s => s.trim()).filter(Boolean);
-  for (const entry of entries) {
-    const fields: Record<string, string> = {};
-    for (const part of entry.split(';')) {
-      const idx = part.indexOf(':');
-      if (idx === -1) continue;
-      const key = part.slice(0, idx).trim().toLowerCase().replace(/\s+/g, '_');
-      fields[key] = part.slice(idx + 1).trim();
-    }
-    results.push({
-      displayName: fields['name'] ?? '',
-      emailMasked: fields['email'] ?? '',
-      permission: fields['permission'] ?? '',
-      acceptance: fields['acceptance_status'] ?? fields['acceptance'] ?? '',
-      role,
-    });
-  }
-  return results;
-}
-
-function parseSharedNotesCsv(csv: string, role: 'sharer' | 'owner'): ParticipantRecord[] {
-  const records: ParticipantRecord[] = [];
-  const lines = csv.split('\n');
-
-  // Detect column positions from header
-  const header = parseCsvLine(lines[0] ?? '').map(h => h.trim().toLowerCase());
-  const fileIdx        = header.findIndex(h => h === 'file name');
-  const sharedOnIdx    = role === 'sharer'
-    ? header.findIndex(h => h === 'shared on')
-    : header.findIndex(h => h === 'shared on');
-  const participantsIdx = header.findIndex(h => h.includes('participants'));
-  const ownerIdx       = header.findIndex(h => h.includes('owner'));
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const fields = parseCsvLine(line);
-
-    const filePath   = fields[fileIdx]?.trim() ?? '';
-    const sharedAtRaw = fields[sharedOnIdx]?.trim() ?? '';
-    const sharedAt   = sharedAtRaw ? parseCsvDate(sharedAtRaw) : 0;
-
-    // For subscribed notes the "owner" is a single person block
-    if (role === 'owner' && ownerIdx !== -1) {
-      const ownerBlock = fields[ownerIdx]?.trim() ?? '';
-      const parsed = parseParticipantBlock(ownerBlock, 'owner');
-      for (const p of parsed) records.push({ filePath, sharedAt, ...p });
-    }
-
-    // Participants column (present in both CSVs)
-    if (participantsIdx !== -1) {
-      const participantsBlock = fields[participantsIdx]?.trim() ?? '';
-      const parsed = parseParticipantBlock(participantsBlock, role);
-      for (const p of parsed) records.push({ filePath, sharedAt, ...p });
-    }
-  }
-
-  return records;
-}
+// ─── Parsing helpers ──────────────────────────────────────────────────────────
+// All pure parsing logic lives in ../services/importParser.ts so it can be
+// exercised by the test suite without needing a database or Express context.
 
 // ─── Path analysis ────────────────────────────────────────────────────────────
 //
@@ -352,6 +62,24 @@ function parseSharedNotesCsv(csv: string, role: 'sharer' | 'owner'): Participant
 // Recently Deleted notes are in a parallel `Recently Deleted/` directory — imported with deleted_at set.
 
 // ─── Main import processor ────────────────────────────────────────────────────
+
+// runImport creates the in-memory job entry and executes the pipeline.
+// Exported for use by the test suite; the HTTP route calls this instead of
+// calling processImport directly.
+export async function runImport(zipPath: string, userId: string): Promise<string> {
+  const jobId = nanoid();
+  jobs.set(jobId, {
+    status: 'pending',
+    progress: 0,
+    total: 0,
+    imported: 0,
+    folders_created: 0,
+    skipped: 0,
+    started_at: Math.floor(Date.now() / 1000),
+  });
+  await processImport(jobId, zipPath, userId);
+  return jobId;
+}
 
 async function processImport(jobId: string, zipPath: string, userId: string) {
   const job = jobs.get(jobId)!;
@@ -457,7 +185,7 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
     // ── Build per-wrapper-dir attachment index ────────────────────────────
     // Key: wrapper directory path (relative to notesPrefix), e.g. "Work/Rate limiting"
     // Value: sorted list of attachment filenames in that directory
-    const attachmentsDir = join(process.cwd(), 'data', 'attachments', userId);
+    const attachmentsDir = join(DATA_DIR, 'attachments', userId);
     mkdirSync(attachmentsDir, { recursive: true });
 
     // Map from wrapper-dir path → sorted attachment filenames in that dir
@@ -614,6 +342,10 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
 router.post('/apple-notes', requireAuth, upload.single('file'), (req: AuthRequest, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+  const userId = req.userId!;
+  const filePath = req.file.path;
+
+  // Fire-and-forget — client polls GET /api/import/:job_id for progress
   const jobId = nanoid();
   jobs.set(jobId, {
     status: 'pending',
@@ -624,8 +356,7 @@ router.post('/apple-notes', requireAuth, upload.single('file'), (req: AuthReques
     skipped: 0,
     started_at: Math.floor(Date.now() / 1000),
   });
-
-  processImport(jobId, req.file.path, req.userId!);
+  processImport(jobId, filePath, userId);
 
   res.status(202).json({ job_id: jobId, status: 'pending' });
 });

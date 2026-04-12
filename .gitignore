@@ -9,3 +9,5 @@ client/dist
 server/dist
 .DS_Store
 *.log
+temp-sample-data/
+server/data/test-result/
