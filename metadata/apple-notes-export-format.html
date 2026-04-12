@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apple Notes Privacy Export Format</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 860px; margin: 40px auto; padding: 0 24px; line-height: 1.6; color: #1a1a1a; }
+    h1 { font-size: 2em; border-bottom: 2px solid #f59e0b; padding-bottom: 12px; }
+    h2 { font-size: 1.4em; margin-top: 2em; color: #92400e; }
+    h3 { font-size: 1.1em; margin-top: 1.5em; }
+    code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; font-family: "SF Mono", "Fira Code", monospace; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 20px; border-radius: 8px; overflow-x: auto; font-size: 0.88em; line-height: 1.7; }
+    pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+    pre .comment { color: #6c7086; }
+    pre .highlight { color: #f9e2af; }
+    pre .green { color: #a6e3a1; }
+    pre .red { color: #f38ba8; }
+    table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+    th { background: #fef3c7; text-align: left; padding: 8px 12px; border: 1px solid #d1d5db; }
+    td { padding: 8px 12px; border: 1px solid #d1d5db; vertical-align: top; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    .callout { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 1em 0; border-radius: 0 6px 6px 0; }
+    .callout strong { color: #92400e; }
+    .hex { font-family: "SF Mono", monospace; color: #7c3aed; }
+  </style>
+</head>
+<body>
+
+<h1>Apple Notes Privacy Export Format</h1>
+
+<p>
+  This document describes the format produced by Apple's EU privacy data export
+  (<a href="https://privacy.apple.com">privacy.apple.com</a>), specifically for Notes.
+  It was reverse-engineered from a real export in April 2026.
+  The brains import pipeline is built against this specification.
+</p>
+
+<div class="callout">
+  <strong>Key insight:</strong> The format is plain UTF-8 text, not HTML or XML.
+  Structure is encoded using Unicode characters and tab indentation, not markup tags.
+</div>
+
+<h2>1. Zip Structure</h2>
+
+<p>Apple delivers the export as a zip file. Inside it:</p>
+
+<pre><code>[archive-name].zip
+└── iCloud Notes/
+    ├── Notes/                      <span class="comment"># all live notes</span>
+    ├── Recently Deleted/           <span class="comment"># deleted notes (same structure)</span>
+    ├── Notes Details.csv           <span class="comment"># metadata: dates, pinned, deleted</span>
+    ├── Shared Notes Info.csv       <span class="comment"># notes you shared with others</span>
+    └── Subscribed Notes Info.csv   <span class="comment"># notes others shared with you</span>
+</code></pre>
+
+<h2>2. Notes Directory Structure</h2>
+
+<p>
+  Each note is stored as a <code>.txt</code> file inside a wrapper directory.
+  The directory name equals the note title. The structure encodes Apple Notes folder membership
+  through directory depth:
+</p>
+
+<pre><code>Notes/
+├── [NoteTitle]/                      <span class="comment"># root-level note (no folder)</span>
+│   └── [NoteTitle].txt
+│
+├── [NoteTitle]/                      <span class="comment"># second note with same title</span>
+│   ├── [NoteTitle].txt               <span class="comment"># → [NoteTitle]-1.txt, -2.txt etc.</span>
+│   └── [NoteTitle]-1.txt
+│
+├── [AppleFolder]/                    <span class="comment"># an Apple Notes folder</span>
+│   ├── [NoteTitle]/
+│   │   └── [NoteTitle].txt           <span class="comment"># note inside the folder</span>
+│   └── [AnotherNote]/
+│       ├── [AnotherNote].txt
+│       └── photo.jpg                 <span class="comment"># attachment in same directory</span>
+</code></pre>
+
+<h3>Depth rules</h3>
+<table>
+  <tr><th>Path depth from <code>Notes/</code></th><th>Interpretation</th></tr>
+  <tr><td><code>Notes/[Wrap]/[Wrap].txt</code> (depth 2)</td><td>Root-level note, title = <code>[Wrap]</code></td></tr>
+  <tr><td><code>Notes/[Folder]/[Wrap]/[Wrap].txt</code> (depth 3)</td><td>Note in folder <code>[Folder]</code>, title = <code>[Wrap]</code></td></tr>
+</table>
+
+<h3>Duplicate title suffix</h3>
+<p>
+  When multiple notes share the same title in a folder, Apple appends <code>-N</code>
+  to the filename (not the wrapper directory). Strip this suffix to get the canonical title:
+</p>
+<pre><code>✅/✅.txt    → title: "✅"
+✅/✅-1.txt  → title: "✅"   <span class="comment"># separate note, same title</span>
+✅/✅-2.txt  → title: "✅"   <span class="comment"># yet another</span>
+</code></pre>
+
+<h3>Attachments</h3>
+<p>
+  Images, PDFs and audio files are stored as siblings of the <code>.txt</code>
+  file in the same wrapper directory. They are not referenced by filename inside the
+  text — their presence is indicated by <code>&#xFFFC;</code> (Object Replacement Character)
+  inline in the note body.
+</p>
+<pre><code>Houses to have/
+├── Houses to have.txt    <span class="comment"># body contains several ￼ placeholders</span>
+├── IMG_4846.JPG
+├── IMG_7512.jpeg
+└── IMG_7514.jpeg
+</code></pre>
+
+<h2>3. Note File Format</h2>
+
+<p>
+  Each <code>.txt</code> file is UTF-8, Unix line endings (<code>\n</code>).
+  The first line is the note title. A blank line follows, then the body.
+</p>
+
+<pre><code><span class="highlight">Packliste</span>                          <span class="comment"># ← title (line 1)</span>
+                                    <span class="comment"># ← blank separator</span>
+	◦	Zip-Jacken               <span class="comment"># ← unchecked checklist item</span>
+	◦	Sonnenbrille
+	✓	Shorts                   <span class="comment"># ← checked checklist item</span>
+	✓	Jacke
+
+Einkaufen
+
+- Brot                             <span class="comment"># ← dash bullet</span>
+- Milch
+* Käse                             <span class="comment"># ← asterisk bullet (same meaning)</span>
+
+Some plain paragraph text.
+</code></pre>
+
+<h2>4. Formatting Characters</h2>
+
+<p>All formatting is expressed through specific Unicode characters and tab characters. There are no HTML tags, Markdown symbols, or proprietary binary sequences.</p>
+
+<table>
+  <tr>
+    <th>Visual appearance</th>
+    <th>Unicode</th>
+    <th>Bytes (hex)</th>
+    <th>Pattern in file</th>
+    <th>Meaning</th>
+  </tr>
+  <tr>
+    <td>◦</td>
+    <td><code>U+25E6</code></td>
+    <td class="hex">09 e2 97 a6 09</td>
+    <td><code>TAB + ◦ + TAB + text</code></td>
+    <td>Unchecked checklist item</td>
+  </tr>
+  <tr>
+    <td>✓</td>
+    <td><code>U+2713</code></td>
+    <td class="hex">09 e2 9c 93 09</td>
+    <td><code>TAB + ✓ + TAB + text</code></td>
+    <td>Checked checklist item</td>
+  </tr>
+  <tr>
+    <td>-</td>
+    <td>ASCII hyphen</td>
+    <td class="hex">2d 20</td>
+    <td><code>- text</code></td>
+    <td>Bullet list item</td>
+  </tr>
+  <tr>
+    <td>*</td>
+    <td>ASCII asterisk</td>
+    <td class="hex">2a 20</td>
+    <td><code>* text</code></td>
+    <td>Bullet list item (alternate)</td>
+  </tr>
+  <tr>
+    <td>￼</td>
+    <td><code>U+FFFC</code></td>
+    <td class="hex">ef bf bc</td>
+    <td>inline in text</td>
+    <td>Embedded image / attachment placeholder</td>
+  </tr>
+  <tr>
+    <td>(tab)</td>
+    <td><code>U+0009</code></td>
+    <td class="hex">09</td>
+    <td>leading tabs</td>
+    <td>Indentation / nesting depth</td>
+  </tr>
+</table>
+
+<h3>Hexdump evidence</h3>
+<p>Confirmed from <code>hexdump -C</code> of a real export file:</p>
+
+<pre><code>00000000  50 61 63 6b 6c 69 73 74  65 0a 0a               |Packliste..|
+<span class="comment">          ^ P  a  c  k  l  i  s     t  e  \n \n</span>
+
+0000000b  09 e2 97 a6 09 5a 69 70  2d 4a 61 63 6b 65 6e   |.....Zip-Jacken|
+<span class="comment">          ^ TAB ^ ◦ (U+25E6) ^ TAB ^ Z  i  p  -  J  a  c  k  e  n</span>
+
+00000040  09 e2 9c 93 09 53 68 6f  72 74 73                |.....Shorts|
+<span class="comment">          ^ TAB ^ ✓ (U+2713) ^ TAB ^ S  h  o  r  t  s</span>
+</code></pre>
+
+<h3>What Apple Notes styles look like in the export</h3>
+
+<div class="callout">
+  <strong>Important:</strong> Apple Notes has styled text (Title, Heading, Subheading, Body, Monospaced).
+  <strong>None of these are preserved</strong> in the privacy export. All styled text is exported as
+  plain text with no markers. There is no way to distinguish a "Heading" from a "Body" line
+  in the export format.
+</div>
+
+<table>
+  <tr><th>Apple Notes style</th><th>In export</th></tr>
+  <tr><td>Title (large bold)</td><td>Plain text line</td></tr>
+  <tr><td>Heading</td><td>Plain text line</td></tr>
+  <tr><td>Subheading</td><td>Plain text line</td></tr>
+  <tr><td>Body</td><td>Plain text line</td></tr>
+  <tr><td>Monospaced</td><td>Plain text line</td></tr>
+  <tr><td>Bold / italic / underline</td><td>Not preserved</td></tr>
+  <tr><td>Checklist (unchecked)</td><td><code>TAB + ◦ + TAB + text</code></td></tr>
+  <tr><td>Checklist (checked)</td><td><code>TAB + ✓ + TAB + text</code></td></tr>
+  <tr><td>Bulleted list</td><td><code>- text</code> or <code>* text</code></td></tr>
+  <tr><td>Numbered list</td><td>Plain text (e.g. <code>1. item</code>) — no special encoding</td></tr>
+  <tr><td>Table</td><td>Plain text — no structural encoding found</td></tr>
+  <tr><td>Embedded image</td><td><code>U+FFFC</code> inline, actual file is a sibling in the same directory</td></tr>
+  <tr><td>Drawn / handwritten content</td><td>Not exported as text; flagged in CSV as <code>Drawing/Handwriting: Yes</code></td></tr>
+  <tr><td>Scanned document</td><td>Image file only</td></tr>
+  <tr><td>Link</td><td>Plain URL text</td></tr>
+</table>
+
+<h2>5. Notes Details.csv</h2>
+
+<p>Contains metadata for every note, including deleted ones.</p>
+
+<h3>Header row</h3>
+<pre><code>Title, Created On, Modified On, Pinned, Deleted, Drawing/Handwriting, ContentHash at Import</code></pre>
+
+<h3>Example rows</h3>
+<pre><code>Packliste,03-14-2023 09:12:44,11-20-2024 17:33:01,No,No,No,
+Rate limiting,01-08-2024 10:05:17,01-08-2024 10:05:17,No,No,No,
+My pinned note,06-01-2022 08:00:00,06-01-2022 08:00:00,Yes,No,No,
+</code></pre>
+
+<h3>Field reference</h3>
+<table>
+  <tr><th>Field</th><th>Format</th><th>Notes</th></tr>
+  <tr><td>Title</td><td>string</td><td>Matches wrapper directory name</td></tr>
+  <tr><td>Created On</td><td><code>MM-DD-YYYY HH:MM:SS</code> (UTC)</td><td></td></tr>
+  <tr><td>Modified On</td><td><code>MM-DD-YYYY HH:MM:SS</code> (UTC)</td><td></td></tr>
+  <tr><td>Pinned</td><td><code>Yes</code> / <code>No</code></td><td></td></tr>
+  <tr><td>Deleted</td><td><code>Yes</code> / <code>No</code></td><td>These notes also appear in <code>Recently Deleted/</code></td></tr>
+  <tr><td>Drawing/Handwriting</td><td><code>Yes</code> / <code>No</code></td><td>No text content available if Yes</td></tr>
+  <tr><td>ContentHash at Import</td><td>string or empty</td><td>Always empty in observed exports</td></tr>
+</table>
+
+<h2>6. Shared Notes Info.csv</h2>
+<pre><code>File Name, Shared On, Last Modified Date, Participants Details</code></pre>
+<p>Participants are encoded as a semicolon-separated list:</p>
+<pre><code>Work/My Shared Note/My Shared Note.txt,01-15-2024 10:00:00,01-20-2024 15:30:00,"Name:Alice Smith; Email:a*****@example.com; Permission:READ_WRITE; Acceptance Status:ACCEPTED | Name:Bob Jones; Email:b*****@example.com; Permission:READ_ONLY; Acceptance Status:INVITED"</code></pre>
+
+<h2>7. Subscribed Notes Info.csv</h2>
+<pre><code>File Name, Owner Details, Last Modified Date, Shared On, Participants Details</code></pre>
+<p>Owner format: <code>Name:X; Email:Y</code> (email partially masked).</p>
+
+<h2>8. Real Content Examples</h2>
+
+<h3>Checklist note</h3>
+<pre><code>Packliste
+
+	<span class="green">◦</span>	Zip-Jacken
+	<span class="green">◦</span>	Sonnenbrille
+	<span class="green">◦</span>	Kulturtasche
+	<span class="red">✓</span>	Shorts
+	<span class="red">✓</span>	Schuhe
+	<span class="red">✓</span>	Jacke
+</code></pre>
+
+<h3>Prose note with inline image placeholders</h3>
+<pre><code>2 Fragen pro Nase, dann Abstimmung
+
+100 Quiz Fragen und Antworten
+<span class="highlight">￼</span>
+Sie können Grundwissen Fragen auf dieser Seite ausdrucken…
+1. Das flächenmäßig kleinste Bundesland heißt?
+Bremen
+Saarland
+Hamburg
+<span class="highlight">￼</span>
+11. Wer oder was ist eine "Druidin"?
+</code></pre>
+
+<h3>Work note with sections</h3>
+<pre><code>Rate limiting
+
+Legit use
+Backbone of ubiquity experiences, a single user may make requests from several devices
+VPN users may share a single outbound IP
+
+Usage to limit
+Scraping, but what does that mean exactly?
+Excessive (non user like) usage of endpoints
+
+Approach
+
+Now:
+
+Build it: Rate limit based on the high amount of requests…
+Think it: Can / should we be more specific about what queries we limit?
+</code></pre>
+
+<h3>Note that is only images</h3>
+<pre><code>Houses to have
+
+<span class="highlight">￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼
+￼</span>
+</code></pre>
+
+<h2>9. Edge Cases &amp; Parser Notes</h2>
+
+<ul>
+  <li><strong>Title mismatch:</strong> The first line of the <code>.txt</code> file should match the wrapper directory name, but always prefer the file content as the canonical title.</li>
+  <li><strong>Empty notes:</strong> A note may contain only the title line and nothing else, or only <code>U+FFFC</code> placeholders after the title.</li>
+  <li><strong>Mixed lists:</strong> Checked and unchecked checklist items can be interleaved in the same block. They should all go into one <code>taskList</code> TipTap node.</li>
+  <li><strong>Checklist followed by plain text:</strong> A note can have a checklist section, then a blank line, then paragraphs. These are separate blocks.</li>
+  <li><strong>Duplicate sections:</strong> Some notes appear to repeat their content (e.g. Packliste has the checklist and then a plain-text copy of the same items below a second "Packliste" heading). This is a quirk of Apple's export, not an error — both sections should be imported as-is.</li>
+  <li><strong>Emoji and special characters in folder/note names:</strong> Fully supported. Folder names like <code>✅</code>, <code>🤔</code>, <code>Даниел</code>, <code>•</code>, <code>"</code> are all valid.</li>
+  <li><strong>URL encoding:</strong> Some URLs observed with <code>|</code> in place of <code>/</code>. This appears to be a display artefact from copy-pasting, not an Apple encoding — treat as plain text.</li>
+  <li><strong>Recently Deleted:</strong> Skip by default. The same notes appear in <code>Notes Details.csv</code> with <code>Deleted: Yes</code>.</li>
+</ul>
+
+<h2>10. TipTap Mapping</h2>
+
+<table>
+  <tr><th>Apple Notes construct</th><th>TipTap node type</th></tr>
+  <tr><td>Plain text paragraph</td><td><code>paragraph</code></td></tr>
+  <tr><td>Unchecked checklist item (<code>TAB◦TAB</code>)</td><td><code>taskList</code> → <code>taskItem</code> <code>attrs.checked=false</code></td></tr>
+  <tr><td>Checked checklist item (<code>TAB✓TAB</code>)</td><td><code>taskList</code> → <code>taskItem</code> <code>attrs.checked=true</code></td></tr>
+  <tr><td>Dash / asterisk bullet (<code>- </code> or <code>* </code>)</td><td><code>bulletList</code> → <code>listItem</code></td></tr>
+  <tr><td>Image placeholder (<code>U+FFFC</code>)</td><td>Skipped (no inline image reference available)</td></tr>
+  <tr><td>Blank line</td><td>Block separator (not emitted as empty paragraph)</td></tr>
+  <tr><td>Heading / styled text</td><td><code>paragraph</code> (style information not available)</td></tr>
+</table>
+
+<hr>
+<p style="color:#6b7280;font-size:0.85em;">
+  Spec written April 2026 · based on real Apple privacy export analysis ·
+  format confirmed via <code>hexdump -C</code> of actual export files
+</p>
+
+</body>
+</html>
