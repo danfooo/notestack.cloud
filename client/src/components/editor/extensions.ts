@@ -1,4 +1,5 @@
 import StarterKit from '@tiptap/starter-kit';
+import { DashBulletList } from './DashList';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
@@ -22,10 +23,12 @@ export function getExtensions(placeholder = 'Start writing...') {
   return [
     StarterKit.configure({
       codeBlock: false, // replaced by CodeBlockLowlight
+      bulletList: false, // replaced by DashBulletList (supports listStyle: 'dash')
       heading: {
         levels: [1, 2, 3],
       },
     }),
+    DashBulletList,
     Underline,
     Link.configure({
       openOnClick: false,
