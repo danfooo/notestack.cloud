@@ -6,6 +6,7 @@ import { notesApi, Note, inferTitle, getBodySnippet } from '../../api/notes';
 import { useUiStore } from '../../stores/uiStore';
 import { Spinner } from '../ui/Spinner';
 import { NoteContextMenu } from './NoteContextMenu';
+import { BulkActionsMenu } from './BulkActionsMenu';
 import { QueryBuilder } from './QueryBuilder';
 import {
   QueryGroup, emptyGroup, isQueryEmpty, serializeQuery, evaluateQuery,
@@ -21,6 +22,7 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
   const { activeView, selectedFolderId } = useUiStore();
   const [filterQuery, setFilterQuery] = useState<QueryGroup>(emptyGroup);
   const [contextMenu, setContextMenu] = useState<{ note: Note; x: number; y: number } | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const hasFilter = !isQueryEmpty(filterQuery);
   const filterKey = serializeQuery(filterQuery);
@@ -75,16 +77,30 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
       <div className="px-4 py-3 border-b border-gray-200 space-y-2">
         <div className="flex items-center justify-between">
           <h2 className="font-medium text-gray-900 text-sm">{getViewTitle()}</h2>
-          <button
-            onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending}
-            className="text-amber-600 hover:text-amber-700 p-1 rounded transition-colors"
-            title="New note (⌘N)"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1">
+            {hasFilter && filteredNotes.length > 0 && (
+              <button
+                onClick={() => setBulkOpen(true)}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 px-2 py-1 rounded border border-gray-200 hover:border-gray-300 hover:bg-white transition-colors"
+                title="Bulk actions on all matching notes"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+                {filteredNotes.length}
+              </button>
+            )}
+            <button
+              onClick={() => createMutation.mutate()}
+              disabled={createMutation.isPending}
+              className="text-amber-600 hover:text-amber-700 p-1 rounded transition-colors"
+              title="New note (⌘N)"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <QueryBuilder value={filterQuery} onChange={setFilterQuery} />
@@ -126,6 +142,21 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
               .then(() => queryClient.invalidateQueries({ queryKey: ['notes'] }))
               .then(() => setContextMenu(null))
           }
+        />
+      )}
+
+      {bulkOpen && filteredNotes.length > 0 && (
+        <BulkActionsMenu
+          notes={filteredNotes}
+          onClose={() => setBulkOpen(false)}
+          onAction={async (updates) => {
+            await Promise.all(updates.map(({ id, data }) => notesApi.update(id, data as any)));
+            await queryClient.invalidateQueries({ queryKey: ['notes'] });
+          }}
+          onDelete={async (ids) => {
+            await Promise.all(ids.map(id => notesApi.delete(id)));
+            await queryClient.invalidateQueries({ queryKey: ['notes'] });
+          }}
         />
       )}
     </div>
