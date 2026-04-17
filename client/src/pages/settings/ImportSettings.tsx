@@ -83,14 +83,16 @@ export function ImportSettings() {
           </div>
         </div>
 
-        <div className="text-sm text-gray-600 mb-4 space-y-1">
-          <p className="font-medium text-gray-700">How to export from Apple Notes:</p>
-          <ol className="list-decimal list-inside space-y-1 text-gray-500">
-            <li>Open Apple Notes on Mac</li>
-            <li>Select all notes or a folder</li>
-            <li>File → Export as PDF or use Settings → Data & Privacy to export</li>
-            <li>Upload the resulting zip file here</li>
-          </ol>
+        <div className="text-sm text-gray-600 mb-4 space-y-3">
+          <div>
+            <p className="font-medium text-gray-700 mb-1">Option A — Apple privacy export (recommended)</p>
+            <p className="text-gray-500">Go to <span className="font-mono text-xs bg-gray-100 px-1 rounded">privacy.apple.com</span> → Obtain a copy of your data → Notes. Preserves folders, dates, pinned state, and shared note details. Takes 1–7 days to prepare.</p>
+          </div>
+          <div>
+            <p className="font-medium text-gray-700 mb-1">Option B — storizzi/notes-exporter</p>
+            <p className="text-gray-500">Run <a href="https://github.com/storizzi/notes-exporter" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">storizzi/notes-exporter</a> locally, then zip the output folder. Preserves folders, dates, rich formatting, and tables. Instant export.</p>
+          </div>
+          <p className="text-gray-400 text-xs">The format is detected automatically — just upload the zip.</p>
         </div>
 
         {error && (
