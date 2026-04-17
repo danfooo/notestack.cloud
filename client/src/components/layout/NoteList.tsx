@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
@@ -6,6 +6,10 @@ import { notesApi, Note, inferTitle, getBodySnippet } from '../../api/notes';
 import { useUiStore } from '../../stores/uiStore';
 import { Spinner } from '../ui/Spinner';
 import { NoteContextMenu } from './NoteContextMenu';
+import { QueryBuilder } from './QueryBuilder';
+import {
+  QueryGroup, emptyGroup, isQueryEmpty, serializeQuery, evaluateQuery,
+} from '../../lib/noteQuery';
 
 interface NoteListProps {
   selectedNoteId?: string;
@@ -14,20 +18,34 @@ interface NoteListProps {
 export function NoteList({ selectedNoteId }: NoteListProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { activeView, selectedFolderId, searchQuery, setSearchQuery } = useUiStore();
-  const [localSearch, setLocalSearch] = useState(searchQuery);
+  const { activeView, selectedFolderId } = useUiStore();
+  const [filterQuery, setFilterQuery] = useState<QueryGroup>(emptyGroup);
   const [contextMenu, setContextMenu] = useState<{ note: Note; x: number; y: number } | null>(null);
 
-  const params: Record<string, any> = {};
-  if (activeView === 'folder' && selectedFolderId) params.folder_id = selectedFolderId;
-  if (activeView === 'pinned') params.folder_id = undefined; // handled in filter
-  if (activeView === 'archived') params.archived = true;
-  if (localSearch) params.q = localSearch;
+  const hasFilter = !isQueryEmpty(filterQuery);
+  const filterKey = serializeQuery(filterQuery);
+
+  // When filtering, fetch everything and evaluate client-side.
+  // When not filtering, use existing view-based server params.
+  const fetchParams = useMemo((): Record<string, any> => {
+    if (hasFilter) return { archived: 'all', limit: 500 };
+    const p: Record<string, any> = {};
+    if (activeView === 'folder' && selectedFolderId) p.folder_id = selectedFolderId;
+    if (activeView === 'archived') p.archived = true;
+    return p;
+  }, [hasFilter, activeView, selectedFolderId]);
 
   const { data: notes = [], isLoading } = useQuery({
-    queryKey: ['notes', activeView, selectedFolderId, localSearch],
-    queryFn: () => notesApi.list(params).then(r => r.data),
+    queryKey: ['notes', activeView, selectedFolderId, filterKey],
+    queryFn: () => notesApi.list(fetchParams).then(r => r.data),
   });
+
+  const filteredNotes = useMemo(() => {
+    if (hasFilter) return notes.filter((n: Note) => evaluateQuery(filterQuery, n));
+    if (activeView === 'pinned')   return notes.filter((n: Note) => n.pinned);
+    if (activeView === 'archived') return notes.filter((n: Note) => n.archived);
+    return notes.filter((n: Note) => !n.archived);
+  }, [notes, hasFilter, filterQuery, activeView]);
 
   const createMutation = useMutation({
     mutationFn: () => notesApi.create({
@@ -40,27 +58,22 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
     },
   });
 
-  const filteredNotes = activeView === 'pinned'
-    ? notes.filter((n: Note) => n.pinned)
-    : activeView === 'archived'
-    ? notes.filter((n: Note) => n.archived)
-    : notes.filter((n: Note) => !n.archived);
-
   const getViewTitle = () => {
+    if (hasFilter) return 'Filter results';
     switch (activeView) {
-      case 'all': return 'All Notes';
-      case 'pinned': return 'Pinned';
+      case 'all':      return 'All Notes';
+      case 'pinned':   return 'Pinned';
       case 'archived': return 'Archived';
-      case 'folder': return 'Folder';
-      default: return 'Notes';
+      case 'folder':   return 'Folder';
+      default:         return 'Notes';
     }
   };
 
   return (
     <div className="h-full flex flex-col bg-gray-50 border-r border-gray-200">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200">
-        <div className="flex items-center justify-between mb-2">
+      <div className="px-4 py-3 border-b border-gray-200 space-y-2">
+        <div className="flex items-center justify-between">
           <h2 className="font-medium text-gray-900 text-sm">{getViewTitle()}</h2>
           <button
             onClick={() => createMutation.mutate()}
@@ -73,13 +86,8 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
             </svg>
           </button>
         </div>
-        {/* Search */}
-        <input
-          value={localSearch}
-          onChange={e => { setLocalSearch(e.target.value); setSearchQuery(e.target.value); }}
-          placeholder="Search notes..."
-          className="w-full px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 placeholder-gray-400"
-        />
+
+        <QueryBuilder value={filterQuery} onChange={setFilterQuery} />
       </div>
 
       {/* Note list */}
@@ -90,7 +98,7 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
           </div>
         ) : filteredNotes.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-gray-400">
-            {localSearch ? 'No notes match your search' : 'No notes yet'}
+            {hasFilter ? 'No notes match this filter' : 'No notes yet'}
           </div>
         ) : (
           filteredNotes.map((note: Note) => (
@@ -124,7 +132,14 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
   );
 }
 
-function NoteCard({ note, selected, onClick, onContextMenu }: { note: Note; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void }) {
+function NoteCard({
+  note, selected, onClick, onContextMenu,
+}: {
+  note: Note;
+  selected: boolean;
+  onClick: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}) {
   const snippet = getBodySnippet(note.body, !note.title);
 
   return (
