@@ -12,4 +12,4 @@ server/dist
 *.log
 temp-sample-data/
 server/data/test-result/
-metadata/test-data/from-notes-exporter
+metadata/
