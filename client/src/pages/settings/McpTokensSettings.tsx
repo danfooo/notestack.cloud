@@ -64,13 +64,30 @@ export function McpTokensSettings() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">Connect an AI assistant</h2>
-        <p className="text-sm text-gray-500">
-          Generate an access code to let any MCP-compatible AI assistant read and write your notes.
-        </p>
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">MCP Tokens</h2>
+        <p className="text-sm text-gray-500">Generate tokens to connect Claude Code to your notestack.cloud knowledge base.</p>
       </div>
 
-      {/* New token reveal */}
+      {/* Setup instructions */}
+      <div className="bg-gray-50 rounded-xl p-5 border border-gray-200">
+        <h3 className="text-sm font-semibold text-gray-900 mb-2">Setup instructions</h3>
+        <p className="text-sm text-gray-600 mb-3">Add this to your <code className="bg-gray-200 px-1 rounded">~/.claude/settings.json</code>:</p>
+        <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 text-xs overflow-x-auto">
+{`{
+  "mcpServers": {
+    "notestack": {
+      "type": "http",
+      "url": "${APP_URL}/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}`}
+        </pre>
+      </div>
+
+      {/* New token was just created */}
       {newToken && (
         <div className="bg-green-50 border border-green-200 rounded-xl p-5 space-y-4">
           <div>

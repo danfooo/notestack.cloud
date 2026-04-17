@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { thoughtsApi } from '../api/thoughts';
+import { inferTitle } from '../api/notes';
 import { ThoughtTypeBadge } from '../components/ui/Badge';
 import { Spinner } from '../components/ui/Spinner';
 
@@ -104,7 +105,7 @@ export function ThoughtsPage() {
                           to={`/notes/${thought.source_note_id}`}
                           className="text-xs text-amber-600 hover:text-amber-700"
                         >
-                          View in note: {thought.note_title || 'Untitled'} →
+                          View in note: {thought.note_title || inferTitle(thought.note_body) || 'Untitled'} →
                         </Link>
                       </div>
                     )}

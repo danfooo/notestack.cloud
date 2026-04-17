@@ -18,6 +18,9 @@
     "test:leave": "cd server && npm run test:leave",
     "db:snapshot": "DIR=db-snapshot-$(date +%Y%m%d-%H%M%S) && mkdir -p $DIR && fly ssh sftp get /app/server/data/notestack.db $DIR/notestack.db && echo \"Snapshot saved to $DIR\""
   },
+  "engines": {
+    "node": "20.x"
+  },
   "devDependencies": {
     "concurrently": "^8.2.2",
     "typescript": "^5.3.3"

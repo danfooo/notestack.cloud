@@ -11,6 +11,14 @@ notestack.cloud is a personal knowledge system. Users write notes. Claude reads 
 - **AI**: @anthropic-ai/sdk, default model claude-opus-4-6
 - **MCP**: Manual JSON-RPC at POST /mcp
 
+## Node version
+This project requires **Node 20**. A `.nvmrc` is committed. Always run `nvm use` (no version argument) before any npm/node commands — it reads the version from `.nvmrc`:
+```bash
+nvm use   # reads .nvmrc → Node 20
+```
+If you see a `better-sqlite3` binding error, you're on the wrong Node — run `nvm use` and `npm rebuild better-sqlite3`.
+For tool binaries (tsx, tsc, vite, etc.) use `./node_modules/.bin/<tool>` or `npx <tool>` — never assume global installs.
+
 ## Dev commands
 ```bash
 npm run dev          # start both server + client

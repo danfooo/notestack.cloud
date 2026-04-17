@@ -37,7 +37,7 @@ export function InvitePage() {
               <div className="text-4xl mb-4">🧠</div>
               <h2 className="text-xl font-semibold text-gray-900 mb-2">You're invited!</h2>
               <p className="text-gray-500 text-sm mb-6">
-                <strong>{invite.inviter_name}</strong> invited you to join brains — a personal knowledge system powered by AI.
+                <strong>{invite.inviter_name}</strong> invited you to join notestack.cloud — a personal knowledge system powered by AI.
               </p>
               <div className="space-y-3">
                 <Link to={`/signup?invite=${token}`}>

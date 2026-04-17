@@ -11,7 +11,7 @@ router.get('/', requireAuth, (req: AuthRequest, res) => {
   const off = parseInt(offset) || 0;
 
   let query = `
-    SELECT t.*, n.title as note_title
+    SELECT t.*, n.title as note_title, n.body as note_body
     FROM thoughts t
     LEFT JOIN notes n ON t.source_note_id = n.id
     WHERE t.user_id = ? AND t.superseded_by IS NULL
@@ -39,7 +39,7 @@ router.get('/', requireAuth, (req: AuthRequest, res) => {
 router.get('/:id', requireAuth, (req: AuthRequest, res) => {
   const { id } = req.params;
   const thought = db.prepare(`
-    SELECT t.*, n.title as note_title
+    SELECT t.*, n.title as note_title, n.body as note_body
     FROM thoughts t
     LEFT JOIN notes n ON t.source_note_id = n.id
     WHERE t.id = ? AND t.user_id = ?

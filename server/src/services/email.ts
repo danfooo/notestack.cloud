@@ -1,4 +1,4 @@
-const FROM = process.env.EMAIL_FROM || 'notestack.cloud <noreply@notestack.cloud.app>';
+const FROM = process.env.EMAIL_FROM || 'notestack.cloud <noreply@notestack.cloud>';
 const APP_URL = process.env.APP_URL || 'http://localhost:5173';
 
 async function sendEmail(to: string, subject: string, html: string) {

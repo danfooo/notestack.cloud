@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { notesApi, Note } from '../../api/notes';
 import { getExtensions } from './extensions';
 import { EditorToolbar } from './EditorToolbar';
-import { useDebounce } from '../../hooks/useDebounce';
 import { Spinner } from '../ui/Spinner';
 
 interface NoteEditorProps {
@@ -14,16 +13,14 @@ interface NoteEditorProps {
 
 export function NoteEditor({ note }: NoteEditorProps) {
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState(note.title || '');
   const [rawMode, setRawMode] = useState(false);
   const [rawJson, setRawJson] = useState('');
   const [lastSaved, setLastSaved] = useState<Date | null>(note.updated_at ? new Date(note.updated_at * 1000) : null);
   const [saving, setSaving] = useState(false);
-  const titleRef = useRef<HTMLTextAreaElement>(null);
   const isFirstLoad = useRef(true);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { title?: string; body?: string }) => notesApi.update(note.id, data),
+    mutationFn: (data: { body?: string }) => notesApi.update(note.id, data),
     onSuccess: (res) => {
       queryClient.setQueryData(['note', note.id], res.data);
       queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -55,7 +52,7 @@ export function NoteEditor({ note }: NoteEditorProps) {
       clearTimeout(timer);
       setSaving(true);
       timer = setTimeout(() => {
-        updateMutation.mutate({ title: titleRef.current?.value, body });
+        updateMutation.mutate({ body });
       }, 1000);
     };
     return () => clearTimeout(timer);
@@ -67,23 +64,9 @@ export function NoteEditor({ note }: NoteEditorProps) {
     isFirstLoad.current = true;
     const content = note.body ? (() => { try { return JSON.parse(note.body!); } catch { return note.body!; } })() : '';
     editor.commands.setContent(content, false);
-    setTitle(note.title || '');
     setLastSaved(note.updated_at ? new Date(note.updated_at * 1000) : null);
     setTimeout(() => { isFirstLoad.current = false; }, 100);
   }, [note.id]);
-
-  const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setTitle(e.target.value);
-    setSaving(true);
-    // Auto-resize
-    e.target.style.height = 'auto';
-    e.target.style.height = `${e.target.scrollHeight}px`;
-  }, []);
-
-  const handleTitleBlur = useCallback(() => {
-    if (!editor) return;
-    updateMutation.mutate({ title, body: JSON.stringify(editor.getJSON()) });
-  }, [title, editor]);
 
   // Cmd+S save
   useEffect(() => {
@@ -91,7 +74,7 @@ export function NoteEditor({ note }: NoteEditorProps) {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
         if (editor) {
-          updateMutation.mutate({ title, body: JSON.stringify(editor.getJSON()) });
+          updateMutation.mutate({ body: JSON.stringify(editor.getJSON()) });
         }
       }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'r') {
@@ -101,7 +84,7 @@ export function NoteEditor({ note }: NoteEditorProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [editor, title]);
+  }, [editor]);
 
   const toggleRaw = () => {
     if (!editor) return;
@@ -110,8 +93,12 @@ export function NoteEditor({ note }: NoteEditorProps) {
     } else {
       try {
         const parsed = JSON.parse(rawJson);
+        const canonical = JSON.stringify(parsed);
         editor.commands.setContent(parsed, false);
-        updateMutation.mutate({ title, body: JSON.stringify(parsed) });
+        // Only save if the JSON was actually edited
+        if (canonical !== JSON.stringify(editor.getJSON())) {
+          updateMutation.mutate({ body: canonical });
+        }
       } catch {
         // ignore invalid JSON
       }
@@ -125,20 +112,6 @@ export function NoteEditor({ note }: NoteEditorProps) {
     <div className="flex flex-col h-full bg-white">
       {/* Toolbar */}
       <EditorToolbar editor={editor} />
-
-      {/* Header */}
-      <div className="px-10 pt-8 pb-2">
-        <textarea
-          ref={titleRef}
-          value={title}
-          onChange={handleTitleChange}
-          onBlur={handleTitleBlur}
-          placeholder="Note title"
-          rows={1}
-          className="w-full resize-none text-3xl font-bold text-gray-900 placeholder-gray-300 border-none outline-none leading-tight overflow-hidden"
-          style={{ minHeight: '2.5rem' }}
-        />
-      </div>
 
       {/* Status bar */}
       <div className="px-10 pb-2 flex items-center gap-2 text-xs text-gray-400">

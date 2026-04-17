@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { dashboardApi } from '../api/dashboard';
+import { inferTitle } from '../api/notes';
 import { ThoughtTypeBadge } from '../components/ui/Badge';
 import { Spinner } from '../components/ui/Spinner';
 
@@ -34,7 +35,7 @@ export function DashboardPage() {
               <div className="space-y-2">
                 {data!.pinned_notes.map((note: any) => (
                   <Link key={note.id} to={`/notes/${note.id}`} className="block hover:bg-gray-50 -mx-2 px-2 py-1.5 rounded-lg">
-                    <div className="font-medium text-sm text-gray-900">{note.title || 'Untitled'}</div>
+                    <div className="font-medium text-sm text-gray-900">{note.title || inferTitle(note.body) || 'Untitled'}</div>
                     {note.body_text && (
                       <div className="text-xs text-gray-500 truncate">{note.body_text.slice(0, 80)}</div>
                     )}
@@ -54,7 +55,7 @@ export function DashboardPage() {
               {(data?.recent_notes ?? []).map((note: any) => (
                 <Link key={note.id} to={`/notes/${note.id}`} className="block hover:bg-gray-50 -mx-2 px-2 py-1.5 rounded-lg">
                   <div className="flex items-center justify-between">
-                    <div className="font-medium text-sm text-gray-900 truncate">{note.title || 'Untitled'}</div>
+                    <div className="font-medium text-sm text-gray-900 truncate">{note.title || inferTitle(note.body) || 'Untitled'}</div>
                     <span className="text-xs text-gray-400 ml-2 flex-shrink-0">
                       {formatDistanceToNow(new Date(note.updated_at * 1000), { addSuffix: false })}
                     </span>
@@ -74,8 +75,8 @@ export function DashboardPage() {
                     <div className="w-4 h-4 rounded border-2 border-amber-400 mt-0.5 flex-shrink-0" />
                     <div>
                       <div className="text-sm text-gray-900">{todo.title || todo.body?.slice(0, 80)}</div>
-                      {todo.note_title && (
-                        <div className="text-xs text-gray-400 mt-0.5">from: {todo.note_title}</div>
+                      {todo.source_note_id && (
+                        <div className="text-xs text-gray-400 mt-0.5">from: {todo.note_title || inferTitle(todo.note_body) || 'Untitled'}</div>
                       )}
                     </div>
                   </div>

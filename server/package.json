@@ -10,6 +10,9 @@
     "test": "node --require tsx/cjs --test test/import.test.ts",
     "test:leave": "LEAVE_RESULT=1 node --require tsx/cjs --test test/import.test.ts"
   },
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.36.3",
     "@types/multer": "^2.1.0",

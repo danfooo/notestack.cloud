@@ -42,7 +42,7 @@ export function VerifyEmailPage() {
             <>
               <div className="text-4xl mb-4">✅</div>
               <h2 className="text-xl font-semibold text-gray-900 mb-2">Email verified!</h2>
-              <p className="text-gray-500 text-sm">Redirecting you to brains...</p>
+              <p className="text-gray-500 text-sm">Redirecting you to notestack.cloud...</p>
             </>
           )}
           {status === 'error' && (

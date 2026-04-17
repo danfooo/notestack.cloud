@@ -120,9 +120,15 @@ Project Alpha/Project Alpha-2.txt → title: "Project Alpha"  <span class="comme
 
 <p>
   Each <code>.txt</code> file is UTF-8, Unix line endings (<code>\n</code>).
-  The first line is the note title (same text as the wrapper directory name).
-  A blank line follows, then the body.
+  The first line is the note title text (same as the wrapper directory name).
+  A blank line follows, then the remaining body content.
 </p>
+<div class="callout info">
+  <strong>brains import behaviour:</strong> The entire file — including the first line — is imported as
+  the note body. The <code>notes.title</code> column is left <code>null</code>; the display title shown
+  in the sidebar is inferred from the first paragraph of the body by the UI. Users can optionally set
+  an explicit title override via the right-click metadata panel on any note card.
+</div>
 
 <pre><code><span class="highlight">Packing list</span>                       <span class="comment"># ← title (line 1, matches directory name)</span>
                                     <span class="comment"># ← blank separator</span>
@@ -445,6 +451,7 @@ Recommend resurfacing before winter.
   <tr><td>Asterisk bullet (<code>* </code>)</td><td><code>bulletList</code> → <code>listItem</code> (round bullets, no extra attrs)</td></tr>
   <tr><td>Dash bullet (<code>- </code>)</td><td><code>bulletList</code> → <code>listItem</code> with <code>attrs.listStyle = "dash"</code></td></tr>
   <tr><td>Image placeholder (<code>U+FFFC</code>)</td><td><code>image</code> node, <code>src</code> resolved from sorted sibling attachment files</td></tr>
+  <tr><td>First line (note title text)</td><td><code>paragraph</code> — imported as the first body paragraph; not stored in <code>notes.title</code></td></tr>
   <tr><td>Blank line</td><td>Block separator — not emitted as a node</td></tr>
   <tr><td>Any styled text (heading, bold, etc.)</td><td><code>paragraph</code> — style information not available in export</td></tr>
 </table>

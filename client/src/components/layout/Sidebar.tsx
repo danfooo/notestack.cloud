@@ -125,7 +125,7 @@ export function Sidebar() {
     <div className="h-full flex flex-col bg-gray-900 text-gray-100 select-none">
       {/* Header */}
       <div className="px-4 py-4 flex items-center justify-between border-b border-white/10">
-        <span className="font-semibold text-white text-base">brains</span>
+        <span className="font-semibold text-white text-base">notestack.cloud</span>
         <button onClick={toggleSidebar} className="text-gray-400 hover:text-white p-1 rounded">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
