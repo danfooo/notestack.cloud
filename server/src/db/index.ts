@@ -55,6 +55,7 @@ db.exec(`
     folder_id   TEXT REFERENCES folders(id) ON DELETE SET NULL,
     pinned      INTEGER NOT NULL DEFAULT 0,
     archived    INTEGER NOT NULL DEFAULT 0,
+    private     INTEGER NOT NULL DEFAULT 0,
     deleted_at  INTEGER,
     created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
     updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
@@ -78,6 +79,7 @@ db.exec(`
     tags_json       TEXT,          -- JSON array of tag strings e.g. '["work","idea"]'
     pinned          INTEGER,
     archived        INTEGER,
+    private         INTEGER,
     note_created_at INTEGER,       -- the user-editable "authored date" on the note
     -- Revision provenance
     saved_by        TEXT NOT NULL DEFAULT 'user',  -- 'user' | 'import' | 'claude'
@@ -185,5 +187,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_import_participants_user_id ON import_participants(user_id);
   CREATE INDEX IF NOT EXISTS idx_import_participants_note_id ON import_participants(note_id);
 `);
+
+// Migrations for columns added after initial schema
+for (const sql of [
+  'ALTER TABLE notes ADD COLUMN private INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE note_revisions ADD COLUMN private INTEGER',
+]) {
+  try { db.exec(sql); } catch { /* column already exists */ }
+}
 
 export default db;

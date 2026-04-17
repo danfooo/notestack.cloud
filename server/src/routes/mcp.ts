@@ -343,8 +343,8 @@ async function handleTool(name: string, args: Record<string, any>, userId: strin
     }
 
     case 'get_dashboard': {
-      const pinned = db.prepare(`SELECT id, title, body_text, updated_at FROM notes WHERE user_id = ? AND pinned = 1 AND deleted_at IS NULL LIMIT 5`).all(userId);
-      const recent = db.prepare(`SELECT id, title, body_text, updated_at FROM notes WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 5`).all(userId);
+      const pinned = db.prepare(`SELECT id, title, body_text, updated_at FROM notes WHERE user_id = ? AND pinned = 1 AND deleted_at IS NULL AND private = 0 LIMIT 5`).all(userId);
+      const recent = db.prepare(`SELECT id, title, body_text, updated_at FROM notes WHERE user_id = ? AND deleted_at IS NULL AND private = 0 ORDER BY updated_at DESC LIMIT 5`).all(userId);
       const todos = db.prepare(`SELECT * FROM thoughts WHERE user_id = ? AND type = 'todo' AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 10`).all(userId);
       const thoughts = db.prepare(`SELECT * FROM thoughts WHERE user_id = ? AND superseded_by IS NULL ORDER BY created_at DESC LIMIT 5`).all(userId);
       return { pinned_notes: pinned, recent_notes: recent, active_todos: todos, recent_thoughts: thoughts };
@@ -372,7 +372,7 @@ async function handleTool(name: string, args: Record<string, any>, userId: strin
             const note = db.prepare('SELECT body_text, title FROM notes WHERE id = ?').get(note_id) as any;
             if (note) noteTexts = [`${note.title || 'Untitled'}\n\n${note.body_text || ''}`];
           } else {
-            const notes = db.prepare('SELECT title, body_text FROM notes WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT 50').all(userId) as any[];
+            const notes = db.prepare('SELECT title, body_text FROM notes WHERE user_id = ? AND deleted_at IS NULL AND private = 0 ORDER BY updated_at DESC LIMIT 50').all(userId) as any[];
             noteTexts = notes.map(n => `${n.title || 'Untitled'}\n\n${n.body_text || ''}`);
           }
 

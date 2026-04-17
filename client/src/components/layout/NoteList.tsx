@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { notesApi, Note } from '../../api/notes';
+import { notesApi, Note, inferTitle, getBodySnippet } from '../../api/notes';
 import { useUiStore } from '../../stores/uiStore';
 import { Spinner } from '../ui/Spinner';
+import { NoteContextMenu } from './NoteContextMenu';
 
 interface NoteListProps {
   selectedNoteId?: string;
@@ -15,6 +16,7 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
   const queryClient = useQueryClient();
   const { activeView, selectedFolderId, searchQuery, setSearchQuery } = useUiStore();
   const [localSearch, setLocalSearch] = useState(searchQuery);
+  const [contextMenu, setContextMenu] = useState<{ note: Note; x: number; y: number } | null>(null);
 
   const params: Record<string, any> = {};
   if (activeView === 'folder' && selectedFolderId) params.folder_id = selectedFolderId;
@@ -29,7 +31,6 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
 
   const createMutation = useMutation({
     mutationFn: () => notesApi.create({
-      title: '',
       body: JSON.stringify({ type: 'doc', content: [{ type: 'paragraph' }] }),
       folder_id: selectedFolderId || undefined,
     }),
@@ -98,22 +99,38 @@ export function NoteList({ selectedNoteId }: NoteListProps) {
               note={note}
               selected={note.id === selectedNoteId}
               onClick={() => navigate(`/notes/${note.id}`)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({ note, x: e.clientX, y: e.clientY });
+              }}
             />
           ))
         )}
       </div>
+
+      {contextMenu && (
+        <NoteContextMenu
+          note={contextMenu.note}
+          position={{ x: contextMenu.x, y: contextMenu.y }}
+          onClose={() => setContextMenu(null)}
+          onSave={(updates) =>
+            notesApi.update(contextMenu.note.id, updates as any)
+              .then(() => queryClient.invalidateQueries({ queryKey: ['notes'] }))
+              .then(() => setContextMenu(null))
+          }
+        />
+      )}
     </div>
   );
 }
 
-function NoteCard({ note, selected, onClick }: { note: Note; selected: boolean; onClick: () => void }) {
-  const snippet = note.body_text
-    ? note.body_text.slice(0, 100) + (note.body_text.length > 100 ? '…' : '')
-    : '';
+function NoteCard({ note, selected, onClick, onContextMenu }: { note: Note; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void }) {
+  const snippet = getBodySnippet(note.body, !note.title);
 
   return (
     <button
       onClick={onClick}
+      onContextMenu={onContextMenu}
       className={`w-full text-left px-4 py-3 border-b border-gray-100 transition-colors hover:bg-white ${
         selected ? 'bg-amber-50 border-l-2 border-l-amber-500' : ''
       }`}
@@ -126,8 +143,13 @@ function NoteCard({ note, selected, onClick }: { note: Note; selected: boolean; 
                 <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
               </svg>
             ) : null}
+            {note.private ? (
+              <svg className="w-3 h-3 text-violet-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            ) : null}
             <span className="font-medium text-sm text-gray-900 truncate">
-              {note.title || 'Untitled'}
+              {note.title || inferTitle(note.body) || 'Untitled'}
             </span>
           </div>
           {snippet && (

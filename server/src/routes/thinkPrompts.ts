@@ -104,7 +104,7 @@ router.post('/:id/run', requireAuth, async (req: AuthRequest, res) => {
         if (note) noteTexts = [`${note.title || 'Untitled'}\n\n${note.body_text || ''}`];
       } else if (prompt.scope === 'all') {
         const notes = db.prepare(
-          'SELECT title, body_text FROM notes WHERE user_id = ? AND deleted_at IS NULL AND archived = 0 ORDER BY updated_at DESC LIMIT 50'
+          'SELECT title, body_text FROM notes WHERE user_id = ? AND deleted_at IS NULL AND archived = 0 AND private = 0 ORDER BY updated_at DESC LIMIT 50'
         ).all(req.userId) as any[];
         noteTexts = notes.map(n => `${n.title || 'Untitled'}\n\n${n.body_text || ''}`);
       }

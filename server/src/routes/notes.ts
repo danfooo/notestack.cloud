@@ -21,7 +21,8 @@ function extractBodyText(body: string | null): string {
   }
 }
 
-async function triggerOnSavePrompts(userId: string, noteId: string, bodyText: string) {
+async function triggerOnSavePrompts(userId: string, noteId: string, bodyText: string, isPrivate: boolean) {
+  if (isPrivate) return;
   try {
     const prompts = db.prepare(`
       SELECT * FROM think_prompts
@@ -126,15 +127,15 @@ router.get('/', requireAuth, (req: AuthRequest, res) => {
 
 // POST /api/notes
 router.post('/', requireAuth, (req: AuthRequest, res) => {
-  const { title, body, folder_id, tags, pinned } = req.body;
+  const { title, body, folder_id, tags, pinned, private: isPrivate } = req.body;
   const now = Math.floor(Date.now() / 1000);
   const id = nanoid();
   const bodyText = extractBodyText(body ?? null);
 
   db.prepare(`
-    INSERT INTO notes (id, user_id, title, body, body_text, folder_id, pinned, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.userId, title ?? null, body ?? null, bodyText, folder_id ?? null, pinned ? 1 : 0, now, now);
+    INSERT INTO notes (id, user_id, title, body, body_text, folder_id, pinned, private, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, req.userId, title ?? null, body ?? null, bodyText, folder_id ?? null, pinned ? 1 : 0, isPrivate ? 1 : 0, now, now);
 
   // Handle tags
   if (Array.isArray(tags)) {
@@ -147,8 +148,8 @@ router.post('/', requireAuth, (req: AuthRequest, res) => {
   const currentTags = db.prepare('SELECT tag FROM note_tags WHERE note_id = ?').all(id) as any[];
   db.prepare(`
     INSERT INTO note_revisions
-      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'user', ?)
+      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, private, note_created_at, saved_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 'user', ?)
   `).run(
     nanoid(), id, title ?? null, body ?? '', bodyText,
     folder_id ?? null,
@@ -177,7 +178,7 @@ router.patch('/:id', requireAuth, async (req: AuthRequest, res) => {
   const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(id, req.userId) as any;
   if (!note) return res.status(404).json({ error: 'Not found' });
 
-  const { title, body, folder_id, pinned, archived, tags } = req.body;
+  const { title, body, folder_id, pinned, archived, private: isPrivate, tags } = req.body;
   const now = Math.floor(Date.now() / 1000);
   const updates: string[] = ['updated_at = ?'];
   const values: unknown[] = [now];
@@ -191,6 +192,7 @@ router.patch('/:id', requireAuth, async (req: AuthRequest, res) => {
   if (folder_id !== undefined) { updates.push('folder_id = ?'); values.push(folder_id); }
   if (pinned !== undefined) { updates.push('pinned = ?'); values.push(pinned ? 1 : 0); }
   if (archived !== undefined) { updates.push('archived = ?'); values.push(archived ? 1 : 0); }
+  if (isPrivate !== undefined) { updates.push('private = ?'); values.push(isPrivate ? 1 : 0); }
 
   values.push(id);
   db.prepare(`UPDATE notes SET ${updates.join(', ')} WHERE id = ?`).run(...values);
@@ -211,8 +213,8 @@ router.patch('/:id', requireAuth, async (req: AuthRequest, res) => {
 
   db.prepare(`
     INSERT INTO note_revisions
-      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, note_created_at, saved_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'user', ?)
+      (id, note_id, title, body, body_text, folder_id, tags_json, pinned, archived, private, note_created_at, saved_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'user', ?)
   `).run(
     nanoid(), id,
     afterNote.title,
@@ -221,12 +223,13 @@ router.patch('/:id', requireAuth, async (req: AuthRequest, res) => {
     JSON.stringify(afterTags.map((t: any) => t.tag)),
     afterNote.pinned,
     afterNote.archived,
+    afterNote.private,
     afterNote.created_at,
     now,
   );
 
   if (body !== undefined) {
-    triggerOnSavePrompts(req.userId!, id, bodyTextForRev);
+    triggerOnSavePrompts(req.userId!, id, bodyTextForRev, !!afterNote.private);
   }
 
   const updatedNote = db.prepare('SELECT * FROM notes WHERE id = ?').get(id) as any;
