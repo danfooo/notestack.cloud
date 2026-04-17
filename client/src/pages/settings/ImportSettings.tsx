@@ -83,14 +83,21 @@ export function ImportSettings() {
           </div>
         </div>
 
-        <div className="text-sm text-gray-600 mb-4 space-y-3">
+        <div className="text-sm text-gray-600 mb-4 space-y-4">
           <div>
-            <p className="font-medium text-gray-700 mb-1">Option A — Apple privacy export (recommended)</p>
-            <p className="text-gray-500">Go to <span className="font-mono text-xs bg-gray-100 px-1 rounded">privacy.apple.com</span> → Obtain a copy of your data → Notes. Preserves folders, dates, pinned state, and shared note details. Takes 1–7 days to prepare.</p>
+            <p className="font-medium text-gray-700 mb-1">Option A — Apple privacy export</p>
+            <p className="text-gray-500">Go to <span className="font-mono text-xs bg-gray-100 px-1 rounded">privacy.apple.com</span> → Obtain a copy of your data → Notes. Upload the zip Apple sends you. Takes 1–7 days to prepare.</p>
+            <p className="text-gray-400 text-xs mt-1">Preserves: folders, created/modified dates, pinned state, shared note participants. Plain text only — no bold, headings, or tables.</p>
           </div>
           <div>
-            <p className="font-medium text-gray-700 mb-1">Option B — storizzi/notes-exporter</p>
-            <p className="text-gray-500">Run <a href="https://github.com/storizzi/notes-exporter" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">storizzi/notes-exporter</a> locally, then zip the output folder. Preserves folders, dates, rich formatting, and tables. Instant export.</p>
+            <p className="font-medium text-gray-700 mb-1">Option B — <a href="https://github.com/storizzi/notes-exporter" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">storizzi/notes-exporter</a> (best formatting)</p>
+            <p className="text-gray-500 mb-1">A free macOS tool that exports directly from the Notes app. Instant — no waiting.</p>
+            <ol className="text-gray-500 space-y-0.5 list-decimal list-inside">
+              <li>Clone or download <a href="https://github.com/storizzi/notes-exporter" target="_blank" rel="noopener noreferrer" className="text-amber-600 underline">storizzi/notes-exporter</a> and follow its setup steps</li>
+              <li>Run <span className="font-mono text-xs bg-gray-100 px-1 rounded">./export_notes.sh</span> — this creates an output folder with <span className="font-mono text-xs bg-gray-100 px-1 rounded">md/</span> and <span className="font-mono text-xs bg-gray-100 px-1 rounded">data/</span> subfolders</li>
+              <li>Zip that output folder and upload it here</li>
+            </ol>
+            <p className="text-gray-400 text-xs mt-1">Preserves: folders, created/modified dates, bold, italic, headings, tables, images. Does not export PDFs or video attachments (Apple&rsquo;s API limitation).</p>
           </div>
           <p className="text-gray-400 text-xs">The format is detected automatically — just upload the zip.</p>
         </div>

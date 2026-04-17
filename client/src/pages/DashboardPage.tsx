@@ -1,13 +1,19 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { dashboardApi } from '../api/dashboard';
 import { inferTitle } from '../api/notes';
+import { thinkPromptsApi } from '../api/thinkPrompts';
 import { ThoughtTypeBadge } from '../components/ui/Badge';
 import { Spinner } from '../components/ui/Spinner';
 
 export function DashboardPage() {
+  // Fire on_dashboard prompts when the page mounts (server deduplicates within 30 min)
+  useEffect(() => {
+    thinkPromptsApi.fire('on_dashboard').catch(() => {});
+  }, []);
+
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => dashboardApi.get().then(r => r.data),

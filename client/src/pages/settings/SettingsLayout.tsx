@@ -5,7 +5,6 @@ import { useAuthStore } from '../../stores/authStore';
 const NAV = [
   { to: '/settings/profile', label: 'Profile' },
   { to: '/settings/shortcuts', label: 'Shortcuts' },
-  { to: '/settings/think-prompts', label: 'Think Prompts' },
   { to: '/settings/mcp-tokens', label: 'MCP Tokens' },
   { to: '/settings/import', label: 'Import' },
 ];

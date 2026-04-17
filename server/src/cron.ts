@@ -8,8 +8,9 @@ cron.schedule('* * * * *', async () => {
     const now = Math.floor(Date.now() / 1000);
 
     const prompts = db.prepare(`
-      SELECT * FROM think_prompts
-      WHERE trigger = 'scheduled' AND enabled = 1 AND schedule IS NOT NULL
+      SELECT tp.* FROM think_prompts tp
+      WHERE tp.enabled = 1 AND tp.schedule IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(tp."trigger") WHERE value = 'scheduled')
     `).all() as any[];
 
     for (const prompt of prompts) {
@@ -83,7 +84,7 @@ async function runScheduledPrompt(runId: string, prompt: any) {
     if (prompt.scope === 'all') {
       const notes = db.prepare(`
         SELECT title, body_text FROM notes
-        WHERE user_id = ? AND deleted_at IS NULL AND archived = 0
+        WHERE user_id = ? AND deleted_at IS NULL AND archived = 0 AND private = 0
         ORDER BY updated_at DESC LIMIT 100
       `).all(prompt.user_id) as any[];
       noteTexts = notes.map(n => `${n.title || 'Untitled'}\n\n${n.body_text || ''}`);

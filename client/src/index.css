@@ -33,6 +33,10 @@
   margin: 0.5rem 0;
 }
 
+/* Nested lists */
+.ProseMirror ul ul { list-style-type: circle; }
+.ProseMirror ul ul ul { list-style-type: square; }
+
 .ProseMirror li {
   margin: 0.2rem 0;
 }

@@ -8,7 +8,7 @@ export interface ThinkPrompt {
   prompt_text: string;
   output_type: string;
   scope: string;
-  trigger: string;
+  trigger: string[];
   schedule: string | null;
   model: string;
   enabled: number;
@@ -29,6 +29,9 @@ export const thinkPromptsApi = {
 
   run: (id: string, noteId?: string) =>
     api.post<{ run_id: string; status: string }>(`/think-prompts/${id}/run`, { note_id: noteId }),
+
+  fire: (trigger: string) =>
+    api.post<{ fired: number; run_ids: string[] }>('/think-prompts/fire', { trigger }),
 };
 
 export const thinkRunsApi = {

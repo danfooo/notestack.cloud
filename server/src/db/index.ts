@@ -196,4 +196,11 @@ for (const sql of [
   try { db.exec(sql); } catch { /* column already exists */ }
 }
 
+// Migrate trigger column from plain string to JSON array
+db.exec(`
+  UPDATE think_prompts
+  SET "trigger" = json_array("trigger")
+  WHERE NOT json_valid("trigger")
+`);
+
 export default db;

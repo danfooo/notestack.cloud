@@ -15,7 +15,6 @@ import { ThoughtsPage } from './pages/ThoughtsPage';
 import { SettingsLayout } from './pages/settings/SettingsLayout';
 import { ProfileSettings } from './pages/settings/ProfileSettings';
 import { ShortcutSettings } from './pages/settings/ShortcutSettings';
-import { ThinkPromptsSettings } from './pages/settings/ThinkPromptsSettings';
 import { McpTokensSettings } from './pages/settings/McpTokensSettings';
 import { ImportSettings } from './pages/settings/ImportSettings';
 
@@ -74,7 +73,6 @@ export default function App() {
               <Route index element={<Navigate to="/settings/profile" replace />} />
               <Route path="profile" element={<ProfileSettings />} />
               <Route path="shortcuts" element={<ShortcutSettings />} />
-              <Route path="think-prompts" element={<ThinkPromptsSettings />} />
               <Route path="mcp-tokens" element={<McpTokensSettings />} />
               <Route path="import" element={<ImportSettings />} />
             </Route>

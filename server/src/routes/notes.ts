@@ -21,12 +21,13 @@ function extractBodyText(body: string | null): string {
   }
 }
 
-async function triggerOnSavePrompts(userId: string, noteId: string, bodyText: string, isPrivate: boolean) {
-  if (isPrivate) return;
+async function triggerOnSavePrompts(userId: string, noteId: string, bodyText: string, isPrivate: boolean, isArchived: boolean) {
+  if (isPrivate || isArchived) return;
   try {
     const prompts = db.prepare(`
-      SELECT * FROM think_prompts
-      WHERE user_id = ? AND trigger = 'on_save' AND enabled = 1 AND scope = 'note'
+      SELECT tp.* FROM think_prompts tp
+      WHERE tp.user_id = ? AND tp.enabled = 1 AND tp.scope = 'note'
+        AND EXISTS (SELECT 1 FROM json_each(tp."trigger") WHERE value = 'on_save')
     `).all(userId) as any[];
 
     if (prompts.length === 0) return;
@@ -229,7 +230,7 @@ router.patch('/:id', requireAuth, async (req: AuthRequest, res) => {
   );
 
   if (body !== undefined) {
-    triggerOnSavePrompts(req.userId!, id, bodyTextForRev, !!afterNote.private);
+    triggerOnSavePrompts(req.userId!, id, bodyTextForRev, !!afterNote.private, !!afterNote.archived);
   }
 
   const updatedNote = db.prepare('SELECT * FROM notes WHERE id = ?').get(id) as any;
