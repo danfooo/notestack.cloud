@@ -19,7 +19,7 @@ mkdirSync(join(dataDir, 'attachments'), { recursive: true });
 
 const allowedOrigins = isDev
   ? ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:4173']
-  : [process.env.APP_URL ?? 'https://brains.fly.dev'];
+  : [process.env.APP_URL ?? 'https://notestack.cloud'];
 
 app.use(cors({
   origin: allowedOrigins,
@@ -65,7 +65,7 @@ if (!isDev) {
 }
 
 app.listen(PORT, () => {
-  console.log(`brains server running on http://localhost:${PORT}`);
+  console.log(`notestack.cloud server running on http://localhost:${PORT}`);
 });
 
 export default app;

@@ -5,7 +5,7 @@ import { mkdirSync } from 'fs';
 const DATA_DIR = process.env.DATA_DIR ?? join(process.cwd(), 'data');
 mkdirSync(DATA_DIR, { recursive: true });
 
-export const db = new Database(join(DATA_DIR, 'brains.db'));
+export const db = new Database(join(DATA_DIR, 'notestack.db'));
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');

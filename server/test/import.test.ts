@@ -7,7 +7,7 @@
  * Run (clean):          npm test
  * Run (leave artefacts): npm test -- --leave-result
  *   → writes a real SQLite DB to server/data/test-result/ and prints note IDs
- *   → attach SQLite browser to server/data/test-result/brains.db to inspect
+ *   → attach SQLite browser to server/data/test-result/notestack.db to inspect
  */
 
 // ── Environment must be set BEFORE any server module is required ──────────────
@@ -261,7 +261,7 @@ describe('Amber Morning — inline photograph threads through correctly', () => 
 
     if (LEAVE_RESULT) {
       console.log('\n── Leave-result artefacts ──────────────────────────────────');
-      console.log(`  DB:          ${join(TEST_DATA_DIR, 'brains.db')}`);
+      console.log(`  DB:          ${join(TEST_DATA_DIR, 'notestack.db')}`);
       console.log(`  note id:     ${note.id}`);
       console.log(`  image src:   ${imageNode.attrs.src}`);
       console.log(`  attachment:  ${savedPath}`);

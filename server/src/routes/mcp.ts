@@ -352,7 +352,7 @@ router.post('/', mcpAuth, async (req: AuthRequest, res) => {
         result = {
           protocolVersion: '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: 'brains', version: '0.1.0' },
+          serverInfo: { name: 'notestack.cloud', version: '0.1.0' },
         };
         break;
 

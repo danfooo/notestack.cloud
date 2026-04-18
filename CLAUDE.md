@@ -1,12 +1,12 @@
-# brains — Claude Instructions
+# notestack.cloud — Claude Instructions
 
 ## What this project is
-brains is a personal knowledge system. Users write notes. Claude reads them, thinks about them, and surfaces connections, summaries, and action items. It exposes an MCP server so Claude Code can use it as persistent memory.
+notestack.cloud is a personal knowledge system. Users write notes. Claude reads them, thinks about them, and surfaces connections, summaries, and action items. It exposes an MCP server so Claude Code can use it as persistent memory.
 
 ## Stack
 - **Server**: Node + Express + TypeScript (tsx watch in dev), port 3000
 - **Client**: React 18 + Vite + TypeScript + Tailwind CSS, port 5173
-- **DB**: better-sqlite3, WAL mode, file at `server/data/brains.db`
+- **DB**: better-sqlite3, WAL mode, file at `server/data/notestack.db`
 - **Auth**: bcrypt + JWT (jose), 30-day expiry
 - **AI**: @anthropic-ai/sdk, default model claude-opus-4-6
 - **MCP**: Manual JSON-RPC at POST /mcp

@@ -47,7 +47,7 @@ router.post('/mcp-tokens', requireAuth, async (req: AuthRequest, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'Token name required' });
 
   const id = nanoid();
-  const plaintext = `brains_${randomBytes(32).toString('hex')}`;
+  const plaintext = `notestack_${randomBytes(32).toString('hex')}`;
   const hash = await bcrypt.hash(plaintext, 10);
   const now = Math.floor(Date.now() / 1000);
 

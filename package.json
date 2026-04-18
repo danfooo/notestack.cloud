@@ -1,5 +1,5 @@
 {
-  "name": "brains",
+  "name": "notestack.cloud",
   "version": "0.1.0",
   "private": true,
   "workspaces": [
@@ -16,7 +16,7 @@
     "start": "cd server && npm start",
     "test": "cd server && npm test",
     "test:leave": "cd server && npm run test:leave",
-    "db:snapshot": "DIR=db-snapshot-$(date +%Y%m%d-%H%M%S) && mkdir -p $DIR && fly ssh sftp get /app/server/data/brains.db $DIR/brains.db && echo \"Snapshot saved to $DIR\""
+    "db:snapshot": "DIR=db-snapshot-$(date +%Y%m%d-%H%M%S) && mkdir -p $DIR && fly ssh sftp get /app/server/data/notestack.db $DIR/notestack.db && echo \"Snapshot saved to $DIR\""
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
