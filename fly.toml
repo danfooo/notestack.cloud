@@ -1,4 +1,4 @@
-app = "brains"
+app = "notestack"
 primary_region = "lax"
 
 [build]
