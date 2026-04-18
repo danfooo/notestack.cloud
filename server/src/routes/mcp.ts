@@ -336,6 +336,17 @@ async function handleTool(name: string, args: Record<string, any>, userId: strin
   }
 }
 
+// GET /mcp — open SSE stream for server-to-client notifications (Streamable HTTP transport)
+router.get('/', mcpAuth, (req: AuthRequest, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 25000);
+  req.on('close', () => clearInterval(keepAlive));
+});
+
 // POST /mcp
 router.post('/', mcpAuth, async (req: AuthRequest, res) => {
   const { jsonrpc, id, method, params } = req.body;
