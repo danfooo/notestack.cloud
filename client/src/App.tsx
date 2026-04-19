@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { useAuthStore } from './stores/authStore';
@@ -21,14 +21,29 @@ import { ImportSettings } from './pages/settings/ImportSettings';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
+function useHydrated() {
+  const [hydrated, setHydrated] = useState(() => useAuthStore.persist.hasHydrated());
+  useEffect(() => {
+    if (!hydrated) {
+      const unsub = useAuthStore.persist.onFinishHydration(() => setHydrated(true));
+      return unsub;
+    }
+  }, [hydrated]);
+  return hydrated;
+}
+
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = useAuthStore(s => s.token);
+  const hydrated = useHydrated();
+  if (!hydrated) return null;
   if (!token) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 function RedirectIfAuthed({ children }: { children: React.ReactNode }) {
   const token = useAuthStore(s => s.token);
+  const hydrated = useHydrated();
+  if (!hydrated) return null;
   if (token) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
