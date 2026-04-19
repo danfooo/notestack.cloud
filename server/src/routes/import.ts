@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { join, extname } from 'path';
-import { mkdirSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync, unlink } from 'fs';
 import multer from 'multer';
 import { nanoid } from 'nanoid';
 import { db } from '../db/index.js';
@@ -25,8 +25,7 @@ const upload = multer({
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB — Apple exports can be large
 });
 
-// In-memory job store
-const jobs = new Map<string, {
+type JobState = {
   status: 'pending' | 'running' | 'done' | 'error';
   progress: number;
   total: number;
@@ -36,7 +35,20 @@ const jobs = new Map<string, {
   error?: string;
   started_at: number;
   finished_at?: number;
-}>();
+};
+
+// In-memory job store (for active jobs)
+const jobs = new Map<string, JobState>();
+
+const insertJob = db.prepare(`
+  INSERT INTO import_jobs (id, user_id, status, progress, total, imported, folders_created, skipped, started_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const updateJob = db.prepare(`
+  UPDATE import_jobs SET status=?, progress=?, total=?, imported=?, folders_created=?, skipped=?, error=?, finished_at=?
+  WHERE id=?
+`);
 
 // ─── Parsing helpers ──────────────────────────────────────────────────────────
 // All pure parsing logic lives in ../services/importParser.ts so it can be
@@ -68,15 +80,10 @@ const jobs = new Map<string, {
 // calling processImport directly.
 export async function runImport(zipPath: string, userId: string): Promise<string> {
   const jobId = nanoid();
-  jobs.set(jobId, {
-    status: 'pending',
-    progress: 0,
-    total: 0,
-    imported: 0,
-    folders_created: 0,
-    skipped: 0,
-    started_at: Math.floor(Date.now() / 1000),
-  });
+  const startedAt = Math.floor(Date.now() / 1000);
+  const state: JobState = { status: 'pending', progress: 0, total: 0, imported: 0, folders_created: 0, skipped: 0, started_at: startedAt };
+  jobs.set(jobId, state);
+  insertJob.run(jobId, userId, 'pending', 0, 0, 0, 0, 0, startedAt);
   await processImport(jobId, zipPath, userId);
   return jobId;
 }
@@ -335,6 +342,9 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
     job.status = 'error';
     job.error = String(err);
     job.finished_at = Math.floor(Date.now() / 1000);
+  } finally {
+    updateJob.run(job.status, job.progress, job.total, job.imported, job.folders_created, job.skipped, job.error ?? null, job.finished_at ?? null, jobId);
+    unlink(zipPath, err => { if (err) console.error('[import] Failed to delete zip:', err); });
   }
 }
 
@@ -344,28 +354,41 @@ router.post('/apple-notes', requireAuth, upload.single('file'), (req: AuthReques
 
   const userId = req.userId!;
   const filePath = req.file.path;
-
-  // Fire-and-forget — client polls GET /api/import/:job_id for progress
   const jobId = nanoid();
-  jobs.set(jobId, {
-    status: 'pending',
-    progress: 0,
-    total: 0,
-    imported: 0,
-    folders_created: 0,
-    skipped: 0,
-    started_at: Math.floor(Date.now() / 1000),
-  });
+  const startedAt = Math.floor(Date.now() / 1000);
+  const state: JobState = { status: 'pending', progress: 0, total: 0, imported: 0, folders_created: 0, skipped: 0, started_at: startedAt };
+  jobs.set(jobId, state);
+  insertJob.run(jobId, userId, 'pending', 0, 0, 0, 0, 0, startedAt);
   processImport(jobId, filePath, userId);
 
   res.status(202).json({ job_id: jobId, status: 'pending' });
 });
 
+// GET /api/import/history
+router.get('/history', requireAuth, (req: AuthRequest, res) => {
+  const rows = db.prepare(
+    `SELECT id, status, progress, total, imported, folders_created, skipped, error, started_at, finished_at
+     FROM import_jobs WHERE user_id = ? ORDER BY started_at DESC LIMIT 50`
+  ).all(req.userId!);
+  // Merge in-memory state for active jobs so progress is live
+  const merged = rows.map((row: any) => ({
+    ...row,
+    ...(jobs.has(row.id) ? jobs.get(row.id) : {}),
+    job_id: row.id,
+  }));
+  res.json(merged);
+});
+
 // GET /api/import/:job_id
 router.get('/:job_id', requireAuth, (req: AuthRequest, res) => {
-  const job = jobs.get(req.params.job_id);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-  res.json({ job_id: req.params.job_id, ...job });
+  const mem = jobs.get(req.params.job_id);
+  if (mem) return res.json({ job_id: req.params.job_id, ...mem });
+  const row: any = db.prepare(
+    `SELECT id, status, progress, total, imported, folders_created, skipped, error, started_at, finished_at
+     FROM import_jobs WHERE id = ? AND user_id = ?`
+  ).get(req.params.job_id, req.userId!);
+  if (!row) return res.status(404).json({ error: 'Job not found' });
+  res.json({ job_id: row.id, ...row });
 });
 
 export default router;

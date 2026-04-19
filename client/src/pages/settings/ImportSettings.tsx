@@ -1,13 +1,37 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import api from '../../api/client';
 import { Button } from '../../components/ui/Button';
 
+type ImportJob = {
+  job_id: string;
+  status: 'pending' | 'running' | 'done' | 'error';
+  progress: number;
+  total: number;
+  imported: number;
+  folders_created: number;
+  skipped: number;
+  error?: string;
+  started_at: number;
+  finished_at?: number;
+};
+
+function formatDate(unix: number) {
+  return new Date(unix * 1000).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
 export function ImportSettings() {
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [job, setJob] = useState<any>(null);
+  const [activeJob, setActiveJob] = useState<ImportJob | null>(null);
+  const [history, setHistory] = useState<ImportJob[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api.get('/import/history').then(r => setHistory(r.data)).catch(() => {});
+  }, []);
 
   const handleUpload = async (file: File) => {
     setError('');
@@ -16,7 +40,8 @@ export function ImportSettings() {
       const form = new FormData();
       form.append('file', file);
       const res = await api.post('/import/apple-notes', form);
-      setJobId(res.data.job_id);
+      const job: ImportJob = { job_id: res.data.job_id, status: 'pending', progress: 0, total: 0, imported: 0, folders_created: 0, skipped: 0, started_at: Math.floor(Date.now() / 1000) };
+      setActiveJob(job);
       pollJob(res.data.job_id);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Upload failed');
@@ -29,9 +54,11 @@ export function ImportSettings() {
     const interval = setInterval(async () => {
       try {
         const res = await api.get(`/import/${id}`);
-        setJob(res.data);
+        setActiveJob(res.data);
         if (res.data.status === 'done' || res.data.status === 'error') {
           clearInterval(interval);
+          setHistory(prev => [res.data, ...prev.filter(j => j.job_id !== id)]);
+          setActiveJob(null);
         }
       } catch {
         clearInterval(interval);
@@ -70,7 +97,22 @@ export function ImportSettings() {
           <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>
         )}
 
-        {!job ? (
+        {activeJob ? (
+          activeJob.status === 'running' || activeJob.status === 'pending' ? (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-gray-700">Importing notes...</span>
+                <span className="text-sm text-gray-500">{activeJob.imported}/{activeJob.total}</span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-amber-500 transition-all duration-500 rounded-full"
+                  style={{ width: `${activeJob.progress || 5}%` }}
+                />
+              </div>
+            </div>
+          ) : null
+        ) : (
           <div>
             <Button
               onClick={() => fileRef.current?.click()}
@@ -90,49 +132,42 @@ export function ImportSettings() {
               }}
             />
           </div>
-        ) : (
-          <div>
-            {job.status === 'running' || job.status === 'pending' ? (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-gray-700">Importing notes...</span>
-                  <span className="text-sm text-gray-500">{job.imported}/{job.total}</span>
-                </div>
-                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-amber-500 transition-all duration-500 rounded-full"
-                    style={{ width: `${job.progress || 5}%` }}
-                  />
-                </div>
-              </div>
-            ) : job.status === 'done' ? (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <h4 className="font-medium text-green-900 mb-2">Import complete!</h4>
-                <ul className="text-sm text-green-700 space-y-1">
-                  <li>✓ {job.imported} notes imported</li>
-                  <li>✓ {job.folders_created} folders created</li>
-                </ul>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="mt-3"
-                  onClick={() => { setJob(null); setJobId(null); }}
-                >
-                  Import another file
-                </Button>
-              </div>
-            ) : (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <h4 className="font-medium text-red-900 mb-1">Import failed</h4>
-                <p className="text-sm text-red-700">{job.error}</p>
-                <Button size="sm" variant="secondary" className="mt-3" onClick={() => { setJob(null); setJobId(null); }}>
-                  Try again
-                </Button>
-              </div>
-            )}
-          </div>
         )}
       </div>
+
+      {/* Import history */}
+      {history.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Import history</h3>
+          <div className="space-y-2">
+            {history.map(job => (
+              <div key={job.job_id} className="bg-white rounded-lg border border-gray-100 p-4 flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    {job.status === 'done' ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Succeeded</span>
+                    ) : job.status === 'error' ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Failed</span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">In progress</span>
+                    )}
+                    <span className="text-xs text-gray-400">{formatDate(job.started_at)}</span>
+                  </div>
+                  {job.status === 'done' && (
+                    <p className="text-sm text-gray-600">
+                      {job.imported} notes imported · {job.folders_created} folders created
+                      {job.skipped > 0 && ` · ${job.skipped} skipped`}
+                    </p>
+                  )}
+                  {job.status === 'error' && (
+                    <p className="text-sm text-red-600 truncate">{job.error}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

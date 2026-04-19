@@ -157,6 +157,22 @@ db.exec(`
     shortcuts_json  TEXT NOT NULL DEFAULT '{}'
   );
 
+  CREATE TABLE IF NOT EXISTS import_jobs (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source          TEXT NOT NULL DEFAULT 'apple_notes',
+    status          TEXT NOT NULL DEFAULT 'pending',
+    progress        INTEGER NOT NULL DEFAULT 0,
+    total           INTEGER NOT NULL DEFAULT 0,
+    imported        INTEGER NOT NULL DEFAULT 0,
+    folders_created INTEGER NOT NULL DEFAULT 0,
+    skipped         INTEGER NOT NULL DEFAULT 0,
+    error           TEXT,
+    started_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+    finished_at     INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_import_jobs_user_id ON import_jobs(user_id);
   CREATE INDEX IF NOT EXISTS idx_notes_user_id ON notes(user_id);
   CREATE INDEX IF NOT EXISTS idx_notes_folder_id ON notes(folder_id);
   CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
