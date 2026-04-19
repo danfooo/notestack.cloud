@@ -90,6 +90,12 @@ To deploy:
 fly deploy
 ```
 
+To create the first user on production:
+
+```bash
+fly ssh console --app notestack --command "sh -c 'SEED_EMAIL=you@example.com SEED_PASSWORD=yourpassword SEED_NAME=YourName node server/dist/seed.js'"
+```
+
 ---
 
 ## Other commands
