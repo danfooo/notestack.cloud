@@ -36,4 +36,7 @@ export const authApi = {
   },
 
   deleteAvatar: () => api.delete<any>('/auth/avatar'),
+
+  changePassword: (current_password: string, new_password: string) =>
+    api.post('/auth/change-password', { current_password, new_password }),
 };

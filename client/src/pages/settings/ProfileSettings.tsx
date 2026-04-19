@@ -40,6 +40,32 @@ export function ProfileSettings() {
     onSuccess: () => { logout(); navigate('/login'); },
   });
 
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSaved, setPasswordSaved] = useState(false);
+
+  const passwordMutation = useMutation({
+    mutationFn: () => authApi.changePassword(currentPassword, newPassword),
+    onSuccess: () => {
+      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+      setPasswordError('');
+      setPasswordSaved(true);
+      setTimeout(() => setPasswordSaved(false), 2000);
+    },
+    onError: (err: any) => {
+      setPasswordError(err.response?.data?.error || 'Failed to change password');
+    },
+  });
+
+  const handlePasswordSubmit = () => {
+    setPasswordError('');
+    if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match'); return; }
+    if (newPassword.length < 8) { setPasswordError('Password must be at least 8 characters'); return; }
+    passwordMutation.mutate();
+  };
+
   return (
     <div className="space-y-8">
       <div>
@@ -102,6 +128,25 @@ export function ProfileSettings() {
         <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
         <p className="text-sm text-gray-900">{user?.email}</p>
       </div>
+
+      {/* Change password — only for password accounts */}
+      {!user?.google_id && (
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-gray-900">Change password</h3>
+          {passwordError && (
+            <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm">{passwordError}</div>
+          )}
+          <Input label="Current password" type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="••••••••" />
+          <Input label="New password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="••••••••" />
+          <Input label="Confirm new password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="••••••••" />
+          <div className="flex items-center gap-3">
+            <Button onClick={handlePasswordSubmit} loading={passwordMutation.isPending} disabled={!currentPassword || !newPassword || !confirmPassword}>
+              Update password
+            </Button>
+            {passwordSaved && <span className="text-sm text-green-600">Password updated!</span>}
+          </div>
+        </div>
+      )}
 
       {/* Danger zone */}
       <div className="border border-red-200 rounded-xl p-5">

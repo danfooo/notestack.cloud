@@ -309,6 +309,23 @@ router.post('/google', async (req, res) => {
   }
 });
 
+// POST /api/auth/change-password
+router.post('/change-password', requireAuth, async (req: AuthRequest, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: 'Both passwords required' });
+  if (new_password.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId) as any;
+  if (!user.password_hash) return res.status(400).json({ error: 'No password set on this account' });
+
+  const valid = await bcrypt.compare(current_password, user.password_hash);
+  if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+
+  const hash = await bcrypt.hash(new_password, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.userId);
+  res.json({ ok: true });
+});
+
 // POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
