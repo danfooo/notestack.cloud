@@ -9,7 +9,7 @@ import { db } from '../db/index.js';
 import { requireAuth, signJwt, AuthRequest } from '../middleware/auth.js';
 import { sendVerificationEmail, sendPasswordResetEmail } from '../services/email.js';
 
-const avatarsDir = join(process.cwd(), 'data', 'avatars');
+const avatarsDir = join(process.env.DATA_DIR ?? join(process.cwd(), 'data'), 'avatars');
 mkdirSync(avatarsDir, { recursive: true });
 
 const upload = multer({

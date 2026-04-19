@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
-import { jwtVerify } from 'jose';
-import bcrypt from 'bcryptjs';
+import { jwtVerify, SignJWT } from 'jose';
+import { createHash } from 'crypto';
 import { db } from '../db/index.js';
 
 if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
@@ -69,49 +69,22 @@ export async function mcpAuth(req: AuthRequest, res: Response, next: NextFunctio
   }
 
   const token = authHeader.slice(7);
-  try {
-    // Find all tokens and compare against hash
-    const tokens = db.prepare('SELECT * FROM mcp_tokens').all() as Array<{
-      id: string;
-      user_id: string;
-      token_hash: string;
-    }>;
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+  const matched = db.prepare('SELECT id, user_id FROM mcp_tokens WHERE token_hash = ?').get(tokenHash) as { id: string; user_id: string } | undefined;
 
-    let matchedUserId: string | null = null;
-    let matchedTokenId: string | null = null;
+  if (!matched) return res.status(401).json({ error: 'Invalid MCP token' });
 
-    for (const t of tokens) {
-      const match = await bcrypt.compare(token, t.token_hash);
-      if (match) {
-        matchedUserId = t.user_id;
-        matchedTokenId = t.id;
-        break;
-      }
-    }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(matched.user_id) as AuthRequest['user'];
+  if (!user) return res.status(401).json({ error: 'User not found' });
 
-    if (!matchedUserId) {
-      return res.status(401).json({ error: 'Invalid MCP token' });
-    }
+  db.prepare('UPDATE mcp_tokens SET last_used_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), matched.id);
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(matchedUserId) as AuthRequest['user'];
-    if (!user) return res.status(401).json({ error: 'User not found' });
-
-    // Update last_used_at
-    db.prepare('UPDATE mcp_tokens SET last_used_at = ? WHERE id = ?').run(
-      Math.floor(Date.now() / 1000),
-      matchedTokenId
-    );
-
-    req.userId = matchedUserId;
-    req.user = user;
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Invalid MCP token' });
-  }
+  req.userId = matched.user_id;
+  req.user = user;
+  next();
 }
 
 export async function signJwt(userId: string): Promise<string> {
-  const { SignJWT } = await import('jose');
   return new SignJWT({})
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(userId)

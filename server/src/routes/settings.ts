@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { randomBytes } from 'crypto';
-import bcrypt from 'bcryptjs';
+import { randomBytes, createHash } from 'crypto';
 import { nanoid } from 'nanoid';
 import { db } from '../db/index.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
@@ -42,13 +41,13 @@ router.get('/mcp-tokens', requireAuth, (req: AuthRequest, res) => {
 });
 
 // POST /api/settings/mcp-tokens
-router.post('/mcp-tokens', requireAuth, async (req: AuthRequest, res) => {
+router.post('/mcp-tokens', requireAuth, (req: AuthRequest, res) => {
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Token name required' });
 
   const id = nanoid();
   const plaintext = `notestack_${randomBytes(32).toString('hex')}`;
-  const hash = await bcrypt.hash(plaintext, 10);
+  const hash = createHash('sha256').update(plaintext).digest('hex');
   const now = Math.floor(Date.now() / 1000);
 
   db.prepare(`
