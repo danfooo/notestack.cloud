@@ -59,15 +59,40 @@ const TOOLS = [
   },
   {
     name: 'update_note',
-    description: "Update an existing note's body",
+    description: "Update an existing note's body. Requires the current revision_id from get_note to prevent overwriting concurrent edits.",
     inputSchema: {
       type: 'object',
       properties: {
         note_id: { type: 'string', description: 'Note ID' },
+        current_revision_id: { type: 'string', description: 'Revision ID from get_note — write is rejected if the note has been edited since' },
         body_markdown: { type: 'string', description: 'New body as plain text' },
         title: { type: 'string', description: 'New title' },
       },
-      required: ['note_id'],
+      required: ['note_id', 'current_revision_id'],
+    },
+  },
+  {
+    name: 'append_to_note',
+    description: 'Append content to an existing note without overwriting it. Safe to call concurrently.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'Note ID' },
+        body_markdown: { type: 'string', description: 'Content to append (plain text or markdown)' },
+      },
+      required: ['note_id', 'body_markdown'],
+    },
+  },
+  {
+    name: 'delete_note',
+    description: 'Soft-delete a note. Requires current_revision_id from get_note to prevent deleting a note that has been edited since.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: 'Note ID' },
+        current_revision_id: { type: 'string', description: 'Revision ID from get_note' },
+      },
+      required: ['note_id', 'current_revision_id'],
     },
   },
   {
@@ -153,7 +178,10 @@ async function handleTool(name: string, args: Record<string, any>, userId: strin
         WHERE notes.id = ? AND notes.user_id = ? AND deleted_at IS NULL
       `).get(args.note_id, userId) as any;
       if (!note) throw new Error('Note not found');
-      return { ...note, tags: note.tags ? note.tags.split(',') : [] };
+      const latestRevision = db.prepare(
+        'SELECT id FROM note_revisions WHERE note_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).get(args.note_id) as any;
+      return { ...note, tags: note.tags ? note.tags.split(',') : [], revision_id: latestRevision?.id ?? null };
     }
 
     case 'list_notes': {
@@ -204,9 +232,15 @@ async function handleTool(name: string, args: Record<string, any>, userId: strin
     }
 
     case 'update_note': {
-      const { note_id, body_markdown, title } = args;
+      const { note_id, current_revision_id, body_markdown, title } = args;
       const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ?').get(note_id, userId) as any;
       if (!note) throw new Error('Note not found');
+      const latestRevision = db.prepare(
+        'SELECT id FROM note_revisions WHERE note_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).get(note_id) as any;
+      if (latestRevision?.id !== current_revision_id) {
+        throw { code: -32600, message: 'Revision conflict: note has been edited since you last read it. Fetch the note again and retry.' };
+      }
 
       const now = Math.floor(Date.now() / 1000);
       const updates: string[] = ['updated_at = ?'];
@@ -233,6 +267,45 @@ async function handleTool(name: string, args: Record<string, any>, userId: strin
       values.push(note_id);
       db.prepare(`UPDATE notes SET ${updates.join(', ')} WHERE id = ?`).run(...values);
       return db.prepare('SELECT * FROM notes WHERE id = ?').get(note_id);
+    }
+
+    case 'append_to_note': {
+      const { note_id, body_markdown } = args;
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(note_id, userId) as any;
+      if (!note) throw new Error('Note not found');
+
+      const now = Math.floor(Date.now() / 1000);
+      const newBodyText = note.body_text ? `${note.body_text}\n${body_markdown}` : body_markdown;
+      const existingDoc = note.body ? JSON.parse(note.body) : { type: 'doc', content: [] };
+      const newParagraphs = body_markdown.split('\n').filter((l: string) => l.trim()).map((line: string) => ({
+        type: 'paragraph',
+        content: [{ type: 'text', text: line }],
+      }));
+      const newBody = JSON.stringify({ ...existingDoc, content: [...(existingDoc.content ?? []), ...newParagraphs] });
+
+      db.prepare('UPDATE notes SET body = ?, body_text = ?, updated_at = ? WHERE id = ?').run(newBody, newBodyText, now, note_id);
+
+      const revId = nanoid();
+      db.prepare(`
+        INSERT INTO note_revisions (id, note_id, body, body_text, saved_by, created_at)
+        VALUES (?, ?, ?, ?, 'claude', ?)
+      `).run(revId, note_id, newBody, newBodyText, now);
+
+      return db.prepare('SELECT * FROM notes WHERE id = ?').get(note_id);
+    }
+
+    case 'delete_note': {
+      const { note_id, current_revision_id } = args;
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND user_id = ? AND deleted_at IS NULL').get(note_id, userId) as any;
+      if (!note) throw new Error('Note not found');
+      const latestRevision = db.prepare(
+        'SELECT id FROM note_revisions WHERE note_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).get(note_id) as any;
+      if (latestRevision?.id !== current_revision_id) {
+        throw { code: -32600, message: 'Revision conflict: note has been edited since you last read it. Fetch the note again and retry.' };
+      }
+      db.prepare('UPDATE notes SET deleted_at = ? WHERE id = ?').run(Math.floor(Date.now() / 1000), note_id);
+      return { deleted: true, note_id };
     }
 
     case 'list_folders': {
