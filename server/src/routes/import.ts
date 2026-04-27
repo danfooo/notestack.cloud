@@ -107,6 +107,8 @@ async function processImport(jobId: string, zipPath: string, userId: string) {
     j.status = 'error';
     j.error = String(err);
     j.finished_at = Math.floor(Date.now() / 1000);
+  } finally {
+    unlink(zipPath, err => { if (err) console.error('[import] Failed to delete zip:', err); });
   }
 }
 
@@ -341,7 +343,6 @@ async function processApplePrivacyImport(jobId: string, directory: any, userId: 
     job.finished_at = Math.floor(Date.now() / 1000);
   } finally {
     updateJob.run(job.status, job.progress, job.total, job.imported, job.folders_created, job.skipped, job.error ?? null, job.finished_at ?? null, jobId);
-    unlink(zipPath, err => { if (err) console.error('[import] Failed to delete zip:', err); });
   }
 }
 
