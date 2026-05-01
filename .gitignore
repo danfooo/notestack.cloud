@@ -13,3 +13,4 @@ server/dist
 temp-sample-data/
 server/data/test-result/
 tmp/
+metadata/private/
